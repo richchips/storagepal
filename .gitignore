@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+.module_cache/
+.build_staging/
+.build_release/
+
