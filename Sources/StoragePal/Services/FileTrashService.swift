@@ -5,7 +5,7 @@ enum TrashMethod: String, Sendable {
     case foundation = "Standard Trash"
     case unlockedAndTrashed = "Unlocked & Trashed"
     case finderAppleScript = "Finder System Trash"
-    case privilegedAdminMove = "Admin Authorized Move"
+    case privilegedAdminMove = "Admin Authorized Move (Single Prompt)"
 }
 
 enum TrashFailureReason: Equatable, Sendable {
@@ -134,13 +134,12 @@ final class FileTrashService {
         }
 
         // Tier 3: Ask macOS Finder via AppleScript
-        // Finder can prompt the user with standard Touch ID / Admin password dialog for /Applications items.
         let finderResult = trashWithFinder(url: url)
         if finderResult.isSuccess {
             return finderResult
         }
 
-        // Tier 4: Privileged admin move to ~/.Trash (if allowed and not canceled)
+        // Tier 4: Privileged admin move to ~/.Trash
         if allowAdminElevation {
             if case .failure(let reason) = finderResult, reason == .userCanceled {
                 return .failure(reason: .userCanceled)
@@ -155,7 +154,7 @@ final class FileTrashService {
         return classifyFailure(for: url)
     }
 
-    /// Trashes multiple items and produces a comprehensive summary.
+    /// Trashes multiple items with unified, single-prompt batch authorization for privileged moves.
     func trashBatch(
         items: [(url: URL, name: String, bytes: Int64, category: String)],
         allowAdminElevation: Bool = true
@@ -164,21 +163,86 @@ final class FileTrashService {
         var totalReclaimed: Int64 = 0
         var successCount = 0
 
+        var pendingPrivilegedItems: [(url: URL, name: String, bytes: Int64, category: String)] = []
+
+        // Stage 1: Fast non-privileged trashing (Tier 1 & 2)
         for item in items {
-            let result = trashItem(at: item.url, allowAdminElevation: allowAdminElevation)
-            if result.isSuccess {
+            guard fm.fileExists(atPath: item.url.path) else {
+                reports.append(
+                    BatchTrashItemReport(
+                        url: item.url,
+                        name: item.name,
+                        bytes: item.bytes,
+                        category: item.category,
+                        result: .failure(reason: .fileNotFound(path: item.url.path))
+                    )
+                )
+                continue
+            }
+
+            // Try Tier 1: Foundation trash
+            do {
+                try fm.trashItem(at: item.url, resultingItemURL: nil)
                 totalReclaimed += item.bytes
                 successCount += 1
-            }
-            reports.append(
-                BatchTrashItemReport(
-                    url: item.url,
-                    name: item.name,
-                    bytes: item.bytes,
-                    category: item.category,
-                    result: result
+                reports.append(
+                    BatchTrashItemReport(
+                        url: item.url,
+                        name: item.name,
+                        bytes: item.bytes,
+                        category: item.category,
+                        result: .success(method: .foundation)
+                    )
                 )
-            )
+                continue
+            } catch {
+                // Try Tier 2: Unlock and retry
+                unlockAndMakeWritable(at: item.url)
+                do {
+                    try fm.trashItem(at: item.url, resultingItemURL: nil)
+                    totalReclaimed += item.bytes
+                    successCount += 1
+                    reports.append(
+                        BatchTrashItemReport(
+                            url: item.url,
+                            name: item.name,
+                            bytes: item.bytes,
+                            category: item.category,
+                            result: .success(method: .unlockedAndTrashed)
+                        )
+                    )
+                    continue
+                } catch {
+                    // Queue for single batch privileged admin execution
+                    pendingPrivilegedItems.append(item)
+                }
+            }
+        }
+
+        // Stage 2: Unified single-prompt privileged execution for all remaining items
+        if !pendingPrivilegedItems.isEmpty {
+            if allowAdminElevation {
+                let privilegedReports = trashBatchWithAdminPrivileges(items: pendingPrivilegedItems)
+                for itemReport in privilegedReports {
+                    if itemReport.result.isSuccess {
+                        totalReclaimed += itemReport.bytes
+                        successCount += 1
+                    }
+                    reports.append(itemReport)
+                }
+            } else {
+                for item in pendingPrivilegedItems {
+                    reports.append(
+                        BatchTrashItemReport(
+                            url: item.url,
+                            name: item.name,
+                            bytes: item.bytes,
+                            category: item.category,
+                            result: classifyFailure(for: item.url)
+                        )
+                    )
+                }
+            }
         }
 
         return BatchTrashSummary(
@@ -193,11 +257,9 @@ final class FileTrashService {
 
     private func unlockAndMakeWritable(at url: URL) {
         let path = url.path
-        // Attempt to remove immutable flags (uchg, schg) via POSIX / Foundation
         try? fm.setAttributes([.immutable: false], ofItemAtPath: path)
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
 
-        // For directories, also attempt unlocking immediate children
         var isDir: ObjCBool = false
         if fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
             if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
@@ -230,7 +292,6 @@ final class FileTrashService {
             let errorNumber = errorDict[NSAppleScript.errorNumber] as? Int ?? 0
             let errorMessage = errorDict[NSAppleScript.errorMessage] as? String ?? "Finder script failed"
 
-            // Error -128 is "User canceled"
             if errorNumber == -128 {
                 return .failure(reason: .userCanceled)
             }
@@ -246,13 +307,30 @@ final class FileTrashService {
     }
 
     private func trashWithAdminPrivileges(url: URL) -> TrashOperationResult {
+        let singleReport = trashBatchWithAdminPrivileges(items: [(url: url, name: url.lastPathComponent, bytes: 0, category: "File")])
+        return singleReport.first?.result ?? classifyFailure(for: url)
+    }
+
+    /// Moves a list of protected files to Trash in a SINGLE composite administrator authorization prompt.
+    private func trashBatchWithAdminPrivileges(
+        items: [(url: URL, name: String, bytes: Int64, category: String)]
+    ) -> [BatchTrashItemReport] {
+        guard !items.isEmpty else { return [] }
+
         let homeTrash = fm.homeDirectoryForCurrentUser.appendingPathComponent(".Trash").path
-        let escapedSource = url.path.replacingOccurrences(of: "'", with: "'\\''")
         let escapedTrash = homeTrash.replacingOccurrences(of: "'", with: "'\\''")
 
-        // Safe non-destructive admin move into user's ~/.Trash folder
-        let shellScript = "mkdir -p '\(escapedTrash)' && mv -f '\(escapedSource)' '\(escapedTrash)/'"
-        let escapedShellScript = shellScript.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        // Build a single composite shell script that moves all items in one command
+        var moveCommands: [String] = ["mkdir -p '\(escapedTrash)'"]
+        for item in items {
+            let escapedSource = item.url.path.replacingOccurrences(of: "'", with: "'\\''")
+            moveCommands.append("mv -f '\(escapedSource)' '\(escapedTrash)/' 2>/dev/null || true")
+        }
+
+        let fullShellScript = moveCommands.joined(separator: " && ")
+        let escapedShellScript = fullShellScript
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
 
         let appleScriptSource = """
         do shell script "\(escapedShellScript)" with administrator privileges
@@ -260,35 +338,68 @@ final class FileTrashService {
 
         var errorDict: NSDictionary?
         let script = NSAppleScript(source: appleScriptSource)
-        let result = script?.executeAndReturnError(&errorDict)
+        _ = script?.executeAndReturnError(&errorDict)
 
-        if result != nil && errorDict == nil {
-            return .success(method: .privilegedAdminMove)
-        }
+        var reports: [BatchTrashItemReport] = []
 
         if let errorDict {
             let errorNumber = errorDict[NSAppleScript.errorNumber] as? Int ?? 0
             let errorMessage = errorDict[NSAppleScript.errorMessage] as? String ?? "Administrator authorization failed"
 
             if errorNumber == -128 {
-                return .failure(reason: .userCanceled)
+                for item in items {
+                    reports.append(
+                        BatchTrashItemReport(
+                            url: item.url,
+                            name: item.name,
+                            bytes: item.bytes,
+                            category: item.category,
+                            result: .failure(reason: .userCanceled)
+                        )
+                    )
+                }
+                return reports
             }
 
             AppErrorLogService.shared.log(
                 category: "TrashService",
-                message: "Admin AppleScript move failed for \(url.lastPathComponent) (code \(errorNumber))",
+                message: "Batch admin move failed for \(items.count) item(s)",
                 details: errorMessage
             )
         }
 
-        return classifyFailure(for: url)
+        // Verify which items were successfully moved to Trash
+        for item in items {
+            if !fm.fileExists(atPath: item.url.path) {
+                reports.append(
+                    BatchTrashItemReport(
+                        url: item.url,
+                        name: item.name,
+                        bytes: item.bytes,
+                        category: item.category,
+                        result: .success(method: .privilegedAdminMove)
+                    )
+                )
+            } else {
+                reports.append(
+                    BatchTrashItemReport(
+                        url: item.url,
+                        name: item.name,
+                        bytes: item.bytes,
+                        category: item.category,
+                        result: classifyFailure(for: item.url)
+                    )
+                )
+            }
+        }
+
+        return reports
     }
 
     private func classifyFailure(for url: URL) -> TrashOperationResult {
         let path = url.path
         let home = fm.homeDirectoryForCurrentUser.path
 
-        // Check if path is in TCC-protected directories
         let protectedSubpaths = [
             "\(home)/Library/Containers",
             "\(home)/Library/Group Containers",

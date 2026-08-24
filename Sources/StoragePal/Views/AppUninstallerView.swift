@@ -218,35 +218,57 @@ struct AppUninstallerView: View {
                 .filter { selectedResidueIDs.contains($0.id) }
                 .reduce(0) { $0 + $1.bytes }
 
-            // Summary Action Bar
+            // Summary Action Bar with Single-Prompt Batch Authorization
             PalCard(padding: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(model.orphanedResidues.count) Orphaned Support Folders (\(ByteText.string(totalResidueBytes)))")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Leftover containers and preferences from apps no longer installed on your Mac.")
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(model.orphanedResidues.count) Orphaned Support Folders (\(ByteText.string(totalResidueBytes)))")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Leftover containers and preferences from apps no longer installed on your Mac.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
+                        }
+
+                        Spacer()
+
+                        Button(selectedResidueIDs.count == model.orphanedResidues.count ? "Deselect All" : "Select All") {
+                            if selectedResidueIDs.count == model.orphanedResidues.count {
+                                selectedResidueIDs.removeAll()
+                            } else {
+                                selectedResidueIDs = Set(model.orphanedResidues.map { $0.id })
+                            }
+                        }
+                        .buttonStyle(PalButtonStyle())
+
+                        if !selectedResidueIDs.isEmpty {
+                            Button {
+                                let toTrash = model.orphanedResidues.filter { selectedResidueIDs.contains($0.id) }
+                                selectedResidueIDs.removeAll()
+                                model.trashOrphanedResidues(toTrash)
+                            } label: {
+                                Label("Allow All & Trash (\(selectedResidueIDs.count) • \(ByteText.string(selectedBytes)))", systemImage: "checkmark.shield.fill")
+                            }
+                            .buttonStyle(PalButtonStyle(prominent: true))
+                        } else {
+                            Button {
+                                model.trashOrphanedResidues(model.orphanedResidues)
+                            } label: {
+                                Label("Allow All & Clean Leftovers", systemImage: "checkmark.shield.fill")
+                            }
+                            .buttonStyle(PalButtonStyle(prominent: true))
+                            .disabled(model.orphanedResidues.isEmpty)
+                        }
+                    }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.shield.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMint)
+                        Text("Fast Single Authorization: Storage Pal groups all items into a single atomic action so you only confirm once.")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.palMuted)
                     }
-
-                    Spacer()
-
-                    Button(selectedResidueIDs.count == model.orphanedResidues.count ? "Deselect All" : "Select All") {
-                        if selectedResidueIDs.count == model.orphanedResidues.count {
-                            selectedResidueIDs.removeAll()
-                        } else {
-                            selectedResidueIDs = Set(model.orphanedResidues.map { $0.id })
-                        }
-                    }
-                    .buttonStyle(PalButtonStyle())
-
-                    Button("Trash Selected (\(ByteText.string(selectedBytes)))") {
-                        let toTrash = model.orphanedResidues.filter { selectedResidueIDs.contains($0.id) }
-                        selectedResidueIDs.removeAll()
-                        model.trashOrphanedResidues(toTrash)
-                    }
-                    .buttonStyle(PalButtonStyle(prominent: true))
-                    .disabled(selectedResidueIDs.isEmpty)
                 }
             }
 
@@ -424,10 +446,20 @@ private struct AppUninstallDetailSheet: View {
             Divider()
 
             HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.shield.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMint)
+                    Text("Single Authorization: App and all support items are trashed in 1 step.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMuted)
+                }
                 Spacer()
-                Button("Move App & Leftovers to Trash") {
+                Button {
                     model.uninstallApp(app)
                     dismiss()
+                } label: {
+                    Label("Allow All & Move to Trash", systemImage: "checkmark.shield.fill")
                 }
                 .buttonStyle(PalButtonStyle(prominent: true))
             }
