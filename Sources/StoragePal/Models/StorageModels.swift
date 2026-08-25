@@ -894,6 +894,105 @@ struct StatisticalWatermarkMetrics: Hashable, Sendable {
     }
 }
 
+// MARK: - In-App iCloud Untangler & Folder Storage Models
+
+enum ICloudClutterKind: String, CaseIterable, Codable, Sendable {
+    case abandonedAppContainer = "Ghost App Folder (App Not Installed)"
+    case largeArchive = "Large Archive / Backup"
+    case syncConflict = "Sync Conflict / Duplicate Copy"
+    case oldInstaller = "Installer / Disk Image (.dmg/.pkg)"
+    case oversizedMedia = "Large Video / Raw Media"
+
+    var icon: String {
+        switch self {
+        case .abandonedAppContainer: "app.dashed"
+        case .largeArchive: "archivebox.fill"
+        case .syncConflict: "exclamationmark.arrow.triangle.2.circlepath"
+        case .oldInstaller: "externaldrive.badge.minus"
+        case .oversizedMedia: "film.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .abandonedAppContainer: .purple
+        case .largeArchive: .orange
+        case .syncConflict: .red
+        case .oldInstaller: .blue
+        case .oversizedMedia: Color.palMint
+        }
+    }
+}
+
+struct ICloudFileItem: Identifiable, Hashable, Codable, Sendable {
+    var id: String { url.path }
+    let url: URL
+    let name: String
+    let bytes: Int64
+    let isDownloadedLocally: Bool
+    let hasSyncConflict: Bool
+    let modifiedAt: Date?
+    let category: String
+}
+
+struct ICloudFolderNode: Identifiable, Hashable, Sendable {
+    var id: String { url.path }
+    let url: URL
+    let name: String
+    let icon: String
+    let totalLogicalBytes: Int64 // Counts toward iCloud quota
+    let localPhysicalBytes: Int64 // Taking physical SSD space
+    let cloudOnlyBytes: Int64 // Evicted/dataless in cloud
+    let fileCount: Int
+    let downloadedFileCount: Int
+    let isAppContainer: Bool
+    let appIdentifier: String?
+    let subfolders: [ICloudFolderNode]
+    let largestFiles: [ICloudFileItem]
+
+    var localFraction: Double {
+        guard totalLogicalBytes > 0 else { return 0 }
+        return Double(localPhysicalBytes) / Double(totalLogicalBytes)
+    }
+}
+
+struct ICloudClutterItem: Identifiable, Hashable, Sendable {
+    var id: String { url.path }
+    let url: URL
+    let name: String
+    let bytes: Int64
+    let kind: ICloudClutterKind
+    let reason: String
+    let isDownloadedLocally: Bool
+}
+
+struct ICloudUntangleReport: Sendable {
+    let totalICloudBytes: Int64
+    let totalLocalSSDBytes: Int64
+    let totalEvictedCloudBytes: Int64
+    let topFolders: [ICloudFolderNode]
+    let appContainers: [ICloudFolderNode]
+    let clutterCandidates: [ICloudClutterItem]
+    let downloadedFiles: [ICloudFileItem]
+    let conflictsCount: Int
+    let scannedAt: Date
+
+    static var empty: ICloudUntangleReport {
+        ICloudUntangleReport(
+            totalICloudBytes: 0,
+            totalLocalSSDBytes: 0,
+            totalEvictedCloudBytes: 0,
+            topFolders: [],
+            appContainers: [],
+            clutterCandidates: [],
+            downloadedFiles: [],
+            conflictsCount: 0,
+            scannedAt: Date()
+        )
+    }
+}
+
+
 
 
 

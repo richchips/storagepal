@@ -22,7 +22,7 @@ final class AppUpdateService: ObservableObject {
     }
 
     var currentVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.17.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.18.0"
     }
 
     private let fm = FileManager.default

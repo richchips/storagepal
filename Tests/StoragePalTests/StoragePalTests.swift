@@ -759,6 +759,16 @@ final class StoragePalTests: XCTestCase {
         let naturalMetrics = await service.analyzeStatisticalWatermark(text: naturalText)
         XCTAssertTrue(naturalMetrics.burstinessScore > 6.0, "Natural text with short and long sentences should yield high burstiness variance.")
     }
+
+    func testICloudUntanglerScanExecution() async {
+        let service = ICloudManagerService.shared
+        let report = await service.scanICloudStorage()
+
+        XCTAssertNotNil(report)
+        XCTAssertTrue(report.totalICloudBytes >= 0)
+        XCTAssertTrue(report.totalLocalSSDBytes >= 0)
+        XCTAssertTrue(report.totalEvictedCloudBytes >= 0)
+    }
 }
 
 

@@ -73,6 +73,7 @@ Storage Pal/
         │   ├── AppUninstallerService.swift # Scans /Applications and hunts hidden ~/Library leftover folders
         │   ├── DuplicateFinderService.swift # Multi-stage streaming SHA-256 universal duplicate file finder
         │   ├── ICloudEvictionService.swift # Scans downloaded local iCloud items and triggers evictUbiquitousItem
+        │   ├── ICloudManagerService.swift # Scans and untangles iCloud folders, app containers, local/cloud split, and ghost apps
         │   ├── MediaCompressorService.swift # AVFoundation HEVC video transcoder and Quartz PDF compressor
         │   ├── PhotoDeduplicatorService.swift # Apple Vision perceptual feature print photo twin deduplicator
         │   └── TreemapLayout.swift # Proportional spatial treemap folder partitioning algorithm

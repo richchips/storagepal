@@ -167,105 +167,530 @@ struct DrivesView: View {
     }
 }
 
+private enum ICloudTab: String, CaseIterable, Identifiable {
+    case folders = "Folders & App Containers"
+    case downloaded = "Local SSD Hogs"
+    case clutter = "iCloud Clutter & Ghosts"
+    case guide = "Untangle Guide"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .folders: "folder.fill"
+        case .downloaded: "arrow.down.circle.fill"
+        case .clutter: "trash.circle.fill"
+        case .guide: "lightbulb.fill"
+        }
+    }
+}
+
 struct ICloudView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var selectedTab: ICloudTab = .folders
+    @State private var folderSearchText: String = ""
+    @State private var selectedClutterIDs: Set<String> = []
+    @State private var expandedFolderPaths: Set<String> = []
+
+    private var report: ICloudUntangleReport {
+        model.iCloudReport ?? .empty
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                SectionHeading(
-                    eyebrow: "iCloud",
-                    title: "Untangle local and cloud storage",
-                    detail: "Two different meters can be full: space on your Mac, and your 50 GB iCloud account."
-                )
-
-                HStack(alignment: .top, spacing: 16) {
-                    PalCard {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("On this Mac", systemImage: "macbook")
-                                .font(.system(size: 13, weight: .bold))
-                            Text(model.report?.iCloudFolder.map { ByteText.string($0.bytes) } ?? "—")
-                                .font(.system(size: 30, weight: .bold, design: .rounded))
-                            Text("Accessible local files in iCloud Drive")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.palMuted)
-                            if let folder = model.report?.iCloudFolder {
-                                Button("Open iCloud Drive") { model.openFolder(folder.url) }
-                                    .buttonStyle(PalButtonStyle())
+            VStack(alignment: .leading, spacing: 22) {
+                // Header & Action Bar
+                HStack(alignment: .top) {
+                    SectionHeading(
+                        eyebrow: "iCloud",
+                        title: "iCloud Untangler & Storage Studio",
+                        detail: "Inspect every folder and app container, measure local SSD vs cloud storage, evict downloads, and sweep clutter."
+                    )
+                    Spacer()
+                    HStack(spacing: 10) {
+                        Button {
+                            model.scanICloudStorage()
+                        } label: {
+                            if model.isICloudScanning {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label("Scan iCloud", systemImage: "arrow.clockwise")
                             }
+                        }
+                        .buttonStyle(PalButtonStyle())
+                        .disabled(model.isICloudScanning)
+
+                        if let report = model.iCloudReport, report.totalLocalSSDBytes > 0 {
+                            Button {
+                                model.evictAllDownloadedICloudFiles()
+                            } label: {
+                                Label("Evict All Local Downloads", systemImage: "arrow.up.to.line.circle")
+                            }
+                            .buttonStyle(PalButtonStyle(prominent: true))
+                        }
+                    }
+                }
+
+                // Dual Storage Breakdown Bar
+                HStack(alignment: .top, spacing: 14) {
+                    PalCard {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("Local SSD Footprint", systemImage: "internaldrive.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Color.palMint)
+                            Text(ByteText.string(report.totalLocalSSDBytes))
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                            Text("Files taking physical disk space on this Mac")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
                     PalCard {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("In your account", systemImage: "icloud")
-                                .font(.system(size: 13, weight: .bold))
-                            Text("50 GB plan")
-                                .font(.system(size: 30, weight: .bold, design: .rounded))
-                            Text("Apple’s panel includes Photos, backups, Mail, Messages, and app data.")
-                                .font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("Cloud-Only Footprint", systemImage: "icloud.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.blue)
+                            Text(ByteText.string(report.totalEvictedCloudBytes))
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                            Text("Dataless placeholders (0 bytes on Mac SSD)")
+                                .font(.system(size: 11))
                                 .foregroundStyle(Color.palMuted)
-                            Button("Manage iCloud Storage") { model.openICloudSettings() }
-                                .buttonStyle(PalButtonStyle(prominent: true))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    PalCard {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("Total iCloud Drive Size", systemImage: "chart.pie.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Color.palInk)
+                            Text(ByteText.string(report.totalICloudBytes))
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                            Text("\(report.topFolders.count + report.appContainers.count) folders & apps tracked")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
-                PalCard {
-                    VStack(alignment: .leading, spacing: 17) {
-                        Text("The least-effort order")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                        cloudStep(number: 1, title: "Open Apple’s storage breakdown", detail: "Check whether Photos, device backups, Drive, Mail, or Messages is actually using the space.")
-                        cloudStep(number: 2, title: "Empty Recently Deleted", detail: "Deleted iCloud Drive files and Photos can continue using cloud storage for up to 30 days.")
-                        cloudStep(number: 3, title: "Use “Remove Download” for local relief", detail: "In Finder, Control-click an iCloud file and choose Remove Download. It stays in iCloud but frees local Mac space.")
+                // Tab Selector
+                Picker("", selection: $selectedTab) {
+                    ForEach(ICloudTab.allCases) { tab in
+                        Label(tab.rawValue, systemImage: tab.icon).tag(tab)
                     }
                 }
+                .pickerStyle(.segmented)
 
-                if !model.localICloudCandidates.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Downloaded Local iCloud Files (\(model.localICloudCandidates.count))")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                        Text("These files are stored locally on your Mac's SSD. Click 'Evict to Cloud' to instantly reclaim local space while preserving the file in iCloud.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.palMuted)
-
-                        ForEach(model.localICloudCandidates) { item in
-                            PalCard(padding: 14) {
-                                HStack(spacing: 14) {
-                                    Image(systemName: "icloud.and.arrow.down")
-                                        .foregroundStyle(Color.palMint)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name)
-                                            .font(.system(size: 13, weight: .bold))
-                                        Text("\(ByteText.string(item.bytes))  •  \(item.url.path)")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(Color.palMuted)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                    Button("Evict to Cloud") {
-                                        model.evictFromLocalSSD(item)
-                                    }
-                                    .buttonStyle(PalButtonStyle(prominent: true))
-                                }
-                            }
-                        }
-                    }
+                // Tab Content
+                switch selectedTab {
+                case .folders:
+                    folderExplorerSection
+                case .downloaded:
+                    downloadedFilesSection
+                case .clutter:
+                    clutterSection
+                case .guide:
+                    untangleGuideSection
                 }
-
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle")
-                    Text("Apple does not give third-party Mac apps access to your complete iCloud quota meter. Storage Pal opens the authoritative Apple panel instead of guessing.")
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
             }
-            .padding(34)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(30)
+            .frame(maxWidth: 950, alignment: .leading)
         }
         .onAppear {
-            model.scanLocalICloudCandidates()
+            if model.iCloudReport == nil {
+                model.scanICloudStorage()
+            }
+        }
+    }
+
+    // MARK: - Tab 1: Folders & App Containers Explorer
+
+    private var folderExplorerSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("iCloud Folders & Application Containers")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                Spacer()
+                TextField("Search folders or apps…", text: $folderSearchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+            }
+
+            let allFolders = (report.topFolders + report.appContainers).filter {
+                folderSearchText.isEmpty || $0.name.localizedCaseInsensitiveContains(folderSearchText) || ($0.appIdentifier?.localizedCaseInsensitiveContains(folderSearchText) == true)
+            }
+
+            if allFolders.isEmpty {
+                PalCard {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.palMint)
+                        Text(model.isICloudScanning ? "Scanning iCloud folders…" : "No matching folders found.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.palMuted)
+                    }
+                }
+            } else {
+                ForEach(allFolders) { folder in
+                    folderCard(folder)
+                }
+            }
+        }
+    }
+
+    private func folderCard(_ folder: ICloudFolderNode) -> some View {
+        let isExpanded = expandedFolderPaths.contains(folder.id)
+
+        return PalCard(padding: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 14) {
+                    Image(systemName: folder.icon)
+                        .font(.system(size: 22))
+                        .foregroundStyle(folder.isAppContainer ? .purple : Color.palMint)
+                        .frame(width: 38, height: 38)
+                        .background((folder.isAppContainer ? Color.purple : Color.palMint).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(folder.name)
+                                .font(.system(size: 13, weight: .bold))
+
+                            if folder.isAppContainer {
+                                Text("App Container")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Color.purple.opacity(0.12), in: Capsule())
+                                    .foregroundStyle(.purple)
+                            }
+                        }
+
+                        Text("\(ByteText.string(folder.totalLogicalBytes)) total  •  \(folder.fileCount) files  •  \(ByteText.string(folder.localPhysicalBytes)) downloaded on Mac")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMuted)
+                    }
+
+                    Spacer()
+
+                    // Action buttons
+                    if folder.localPhysicalBytes > 0 {
+                        Button {
+                            model.evictICloudFolder(folder)
+                        } label: {
+                            Label("Evict Folder", systemImage: "arrow.up.to.line")
+                        }
+                        .buttonStyle(PalButtonStyle())
+                        .help("Removes local downloads for all files in this folder while preserving them safely in iCloud.")
+                    }
+
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+                    } label: {
+                        Image(systemName: "folder.badge.gearshape")
+                    }
+                    .buttonStyle(PalButtonStyle())
+                    .help("Reveal folder in Finder")
+
+                    Button {
+                        if isExpanded {
+                            expandedFolderPaths.remove(folder.id)
+                        } else {
+                            expandedFolderPaths.insert(folder.id)
+                        }
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Split Bar (Local vs Cloud)
+                if folder.totalLogicalBytes > 0 {
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(Color.palMint)
+                                .frame(width: geo.size.width * CGFloat(folder.localFraction))
+                            Rectangle()
+                                .fill(Color.blue.opacity(0.4))
+                                .frame(width: geo.size.width * CGFloat(1.0 - folder.localFraction))
+                        }
+                    }
+                    .frame(height: 5)
+                    .clipShape(Capsule())
+                }
+
+                // Expanded Largest Files
+                if isExpanded && !folder.largestFiles.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Largest Files in this Folder:")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.palMuted)
+
+                        ForEach(folder.largestFiles) { file in
+                            HStack(spacing: 8) {
+                                Image(systemName: file.isDownloadedLocally ? "icloud.and.arrow.down.fill" : "icloud")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(file.isDownloadedLocally ? Color.palMint : .blue)
+                                Text(file.name)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(ByteText.string(file.bytes))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.palMuted)
+
+                                if file.isDownloadedLocally {
+                                    Button("Evict") {
+                                        model.evictFromLocalSSD(
+                                            FileCandidate(
+                                                id: file.url.path,
+                                                url: file.url,
+                                                bytes: file.bytes,
+                                                modifiedAt: file.modifiedAt,
+                                                isCloudItem: true
+                                            )
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.palMint)
+                                } else {
+                                    Button("Download") {
+                                        model.downloadICloudFile(file)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.blue)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    // MARK: - Tab 2: Downloaded Local SSD Files
+
+    private var downloadedFilesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Downloaded Files Stored on Mac SSD (\(report.downloadedFiles.count))")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text("These files take physical disk space on your Mac. Evicting frees local SSD space immediately while keeping the file stored safely in iCloud.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMuted)
+                }
+                Spacer()
+                if !report.downloadedFiles.isEmpty {
+                    Button("Evict All Downloaded Files") {
+                        model.evictAllDownloadedICloudFiles()
+                    }
+                    .buttonStyle(PalButtonStyle(prominent: true))
+                }
+            }
+
+            if report.downloadedFiles.isEmpty {
+                PalCard {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.palMint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("No Heavy Downloaded Files on SSD")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("All iCloud files are currently offloaded/dataless in the cloud, using 0 bytes of local SSD space.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
+                        }
+                    }
+                }
+            } else {
+                ForEach(report.downloadedFiles.prefix(30)) { file in
+                    PalCard(padding: 12) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "icloud.and.arrow.down.fill")
+                                .foregroundStyle(Color.palMint)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(file.name)
+                                    .font(.system(size: 12, weight: .bold))
+                                Text("\(ByteText.string(file.bytes))  •  \(file.category)  •  \(file.url.deletingLastPathComponent().lastPathComponent)")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.palMuted)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Button("Evict to Cloud") {
+                                model.evictFromLocalSSD(
+                                    FileCandidate(
+                                        id: file.url.path,
+                                        url: file.url,
+                                        bytes: file.bytes,
+                                        modifiedAt: file.modifiedAt,
+                                        isCloudItem: true
+                                    )
+                                )
+                            }
+                            .buttonStyle(PalButtonStyle(prominent: true))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Tab 3: iCloud Clutter & Ghost Apps
+
+    private var clutterSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("iCloud Clutter & Ghost App Containers (\(report.clutterCandidates.count))")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text("Uninstalled app containers, legacy archives (.dmg/.pkg/.zip), and sync conflict duplicates taking up space in your iCloud account.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMuted)
+                }
+                Spacer()
+
+                if !selectedClutterIDs.isEmpty {
+                    Button("Move Selected to Trash (\(selectedClutterIDs.count))") {
+                        let selectedItems = report.clutterCandidates.filter { selectedClutterIDs.contains($0.id) }
+                        model.trashICloudClutter(items: selectedItems)
+                        selectedClutterIDs.removeAll()
+                    }
+                    .buttonStyle(PalButtonStyle(prominent: true))
+                }
+            }
+
+            if report.clutterCandidates.isEmpty {
+                PalCard {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.palMint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Zero iCloud Clutter Detected")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("No abandoned app folders, sync conflicts, or stale archives were found in iCloud Drive.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
+                        }
+                    }
+                }
+            } else {
+                ForEach(report.clutterCandidates) { item in
+                    PalCard(padding: 12) {
+                        HStack(spacing: 12) {
+                            Toggle("", isOn: Binding(
+                                get: { selectedClutterIDs.contains(item.id) },
+                                set: { isOn in
+                                    if isOn { selectedClutterIDs.insert(item.id) } else { selectedClutterIDs.remove(item.id) }
+                                }
+                            ))
+                            .labelsHidden()
+
+                            Image(systemName: item.kind.icon)
+                                .font(.system(size: 18))
+                                .foregroundStyle(item.kind.color)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(item.name)
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text(item.kind.rawValue)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(item.kind.color.opacity(0.12), in: Capsule())
+                                        .foregroundStyle(item.kind.color)
+                                }
+                                Text("\(ByteText.string(item.bytes))  •  \(item.reason)")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.palMuted)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                            } label: {
+                                Image(systemName: "magnifyingglass")
+                            }
+                            .buttonStyle(PalButtonStyle())
+                            .help("Reveal in Finder")
+
+                            Button("Trash") {
+                                model.trashICloudClutter(items: [item])
+                            }
+                            .buttonStyle(PalButtonStyle())
+                            .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Tab 4: Untangle Guide
+
+    private var untangleGuideSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            PalCard {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("The Least-Effort Order to Untangle iCloud")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+
+                    cloudStep(
+                        number: 1,
+                        title: "Use “Evict Folder” or “Evict All” for instant local Mac relief",
+                        detail: "Evicting marks files as dataless on your Mac SSD. They remain 100% accessible in iCloud Drive and download automatically when opened."
+                    )
+
+                    cloudStep(
+                        number: 2,
+                        title: "Sweep Ghost App Containers & Stale Archives",
+                        detail: "When you uninstall an app from your Mac, its iCloud data container remains in Apple's cloud indefinitely. Storage Pal identifies these ghost folders so you can safely trash them."
+                    )
+
+                    cloudStep(
+                        number: 3,
+                        title: "Empty iCloud Recently Deleted",
+                        detail: "Deleted files in iCloud Drive and Photos continue consuming cloud storage for up to 30 days. Open Apple's panel to permanently purge recently deleted items."
+                    )
+                }
+            }
+
+            PalCard {
+                HStack(spacing: 14) {
+                    Image(systemName: "applelogo")
+                        .font(.system(size: 24))
+                        .foregroundStyle(Color.palInk)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple iCloud Account Quota")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Apple manages device backups, iCloud Photos, Mail, and Messages directly. Use Apple's panel for total account quota management.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMuted)
+                    }
+                    Spacer()
+                    Button("Manage Apple ID Settings…") {
+                        model.openICloudSettings()
+                    }
+                    .buttonStyle(PalButtonStyle())
+                }
+            }
         }
     }
 

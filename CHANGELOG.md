@@ -3,6 +3,26 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.18.0] - 2026-08-25
+
+### Added
+- **Complete In-App iCloud Untangler & Folder Storage Studio (`ICloudManagerService` & `ICloudView`)**:
+  - **Comprehensive In-App Folder Scanner**: Recursively scans all primary iCloud Drive directories (`~/Library/Mobile Documents/com~apple~CloudDocs/`) and application ubiquity containers (`~/Library/Mobile Documents/*`) directly within Storage Pal.
+  - **Dual Local vs. Cloud Storage Meter**: Measures exact **Local SSD Footprint** (physical bytes taking space on this Mac) vs. **Cloud-Only Footprint** (dataless evicted files) vs. **Total iCloud Drive Quota Footprint**.
+  - **Folder & App Container Hierarchy Explorer**:
+    - Interactive visual cards for every folder (Desktop, Documents, Downloads, custom user folders) and app ubiquity containers (Obsidian, GoodNotes, Keynote, Pages, Numbers).
+    - Proportional Local vs. Cloud split bars per folder.
+    - Expandable inspection of the largest files within each folder with individual 1-click **"Evict to Cloud"** or **"Download for Offline"**.
+    - 1-Click **"Evict Folder"** (reclaims local Mac SSD space across all files in a folder while preserving files in iCloud) and 1-Click **"Reveal in Finder"**.
+  - **Ghost App Container & Abandoned Cloud Folder Hunter**:
+    - Cross-references container bundle identifiers against installed `/Applications` and flags ghost containers left behind by uninstalled software.
+  - **iCloud Clutter Cleaner**:
+    - Scans for forgotten disk images (`.dmg`, `.pkg`), large archives (`.zip`, `.tar.gz`), sync conflict duplicates (`* (conflicted copy) *`), and oversized raw media.
+    - 1-Click batch **"Move Selected to Trash"** with 100% Trash recovery safety.
+  - **1-Click "Evict All Local Downloads"**: Instantly reclaims physical SSD space across all downloaded iCloud files on your Mac without deleting files from iCloud.
+
+---
+
 ## [0.17.0] - 2026-08-25
 
 ### Added

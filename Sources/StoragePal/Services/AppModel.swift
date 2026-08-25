@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     @Published var browserCacheGroups: [BrowserCacheGroup] = []
     @Published var staleLogGroups: [SystemLogGroup] = []
     @Published var localICloudCandidates: [FileCandidate] = []
+    @Published var iCloudReport: ICloudUntangleReport?
+    @Published var isICloudScanning = false
     @Published var permissionRecoveryContext: PermissionRecoveryContext?
     @Published var isBrowserCleanerViewPresented = false
 
@@ -29,6 +31,7 @@ final class AppModel: ObservableObject {
     private let logCleaner = SystemLogCleanerService()
     private let photoQuality = PhotoQualityService()
     private let iCloudService = ICloudEvictionService()
+    private let iCloudManager = ICloudManagerService.shared
     private let mediaCompressor = MediaCompressorService()
     let intelligenceEngine = StorageIntelligenceEngine()
     let trashService = FileTrashService.shared
@@ -818,12 +821,97 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: - Phase 3: iCloud Eviction & Media Shrinker
+    // MARK: - Phase 3: iCloud Eviction & Untangler
+
+    func scanICloudStorage() {
+        guard !isICloudScanning else { return }
+        isICloudScanning = true
+        Task {
+            let report = await iCloudManager.scanICloudStorage()
+            let candidates = await iCloudService.findLocalICloudCandidates()
+            self.iCloudReport = report
+            self.localICloudCandidates = candidates
+            self.isICloudScanning = false
+        }
+    }
 
     func scanLocalICloudCandidates() {
+        scanICloudStorage()
+    }
+
+    func evictICloudFolder(_ folder: ICloudFolderNode) {
         Task {
-            let candidates = await iCloudService.findLocalICloudCandidates()
-            self.localICloudCandidates = candidates
+            do {
+                let (count, bytes) = try await iCloudManager.evictFolder(at: folder.url)
+                scanICloudStorage()
+
+                let entry = MaintenanceLogEntry(
+                    id: UUID().uuidString,
+                    timestamp: Date(),
+                    ruleName: "iCloud Folder Eviction: \(folder.name)",
+                    actionDescription: "Evicted \(count) local files in folder to cloud (\(ByteText.string(bytes)))",
+                    filesProcessedCount: count,
+                    reclaimedBytes: bytes,
+                    wasTriggeredByLowSpace: false,
+                    errorDetails: nil
+                )
+                self.maintenanceLogs.insert(entry, at: 0)
+                self.saveMaintenanceLogs()
+            } catch {
+                self.errorMessage = "Could not evict folder “\(folder.name)”: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func evictAllDownloadedICloudFiles() {
+        guard let report = iCloudReport, !report.downloadedFiles.isEmpty else { return }
+        Task {
+            var totalReclaimed: Int64 = 0
+            var count = 0
+            for item in report.downloadedFiles {
+                do {
+                    let bytes = try await iCloudManager.evictFile(at: item.url)
+                    totalReclaimed += bytes
+                    count += 1
+                } catch {}
+            }
+            scanICloudStorage()
+
+            let entry = MaintenanceLogEntry(
+                id: UUID().uuidString,
+                timestamp: Date(),
+                ruleName: "iCloud Batch Eviction",
+                actionDescription: "Evicted \(count) downloaded files across iCloud Drive (\(ByteText.string(totalReclaimed)))",
+                filesProcessedCount: count,
+                reclaimedBytes: totalReclaimed,
+                wasTriggeredByLowSpace: false,
+                errorDetails: nil
+            )
+            self.maintenanceLogs.insert(entry, at: 0)
+            self.saveMaintenanceLogs()
+        }
+    }
+
+    func trashICloudClutter(items: [ICloudClutterItem]) {
+        Task {
+            let tuples = items.map { (url: $0.url, name: $0.name, bytes: $0.bytes, category: $0.kind.rawValue) }
+            let summary = trashService.trashBatch(items: tuples)
+            scanICloudStorage()
+
+            if summary.hasFailures {
+                self.errorMessage = "Moved \(summary.successCount) clutter item(s) to Trash, but \(summary.failedItems.count) failed."
+            }
+        }
+    }
+
+    func downloadICloudFile(_ item: ICloudFileItem) {
+        Task {
+            do {
+                try await iCloudManager.downloadItem(at: item.url)
+                scanICloudStorage()
+            } catch {
+                self.errorMessage = "Could not start downloading “\(item.name)”: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -833,6 +921,7 @@ final class AppModel: ObservableObject {
                 let reclaimed = try await iCloudService.evictItem(at: candidate.url)
                 self.localICloudCandidates.removeAll { $0.id == candidate.id }
                 self.remove([candidate])
+                scanICloudStorage()
 
                 let entry = MaintenanceLogEntry(
                     id: UUID().uuidString,
