@@ -3,6 +3,27 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.19.0] - 2026-08-25
+
+### Added
+- **Automated Folder-to-External Drive Mover with Dual Schedule & Size Limit Triggers (`AutomationView` & `AppModel`)**:
+  - **Dual Automation Triggers**:
+    - **Time/Schedule Trigger**: Automatically executes on a recurring cadence (Hourly, Daily, Weekly, Monthly, or Manual).
+    - **Folder Size Limit Trigger**: Monitors folder storage in real time and automatically fires whenever the folder crosses a user-defined capacity threshold (e.g., *"Move files from Downloads whenever Downloads exceeds 10 GB"*).
+  - **External Drive Integration**:
+    - 1-Click volume picker detecting attached USB, Thunderbolt, SD Cards, and external drives (`/Volumes/*`) with live available/total capacity meters.
+    - Automatic folder creation (`StoragePal_Archive/<SourceFolderName>`) or custom folder destination selection.
+    - **Year-Month Subfolder Archiving**: Optional automated grouping of moved files into date-based subfolders (e.g. `2026-08/`).
+    - Smart Drive Presence Guard: Gracefully defers rule execution and logs an informative status message if the external drive is not currently mounted.
+  - **Non-Destructive File Movement**:
+    - Safely transfers files across volumes with collision-free naming (`uniqueDestination`) and integrity validation before freeing local Mac SSD space.
+    - Supports **"Move to External Drive (Free Local Space)"**, **"Copy to External Drive (Keep Local Source)"**, and **"Archive to Specific Folder"**.
+  - **Enhanced Rule Cards & Execution Audit Log**:
+    - Live badges displaying dual triggers (*"Weekly"* + *"Size Trigger: > 10 GB"*), destination paths, and action icons.
+    - Detailed execution history recording exact trigger causes (*"Scheduled (Weekly)"*, *"Size Trigger (14.2 GB > 10.0 GB)"*, *"Low Mac Storage"*), files transferred count, and space reclaimed.
+
+---
+
 ## [0.18.0] - 2026-08-25
 
 ### Added

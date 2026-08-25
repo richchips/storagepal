@@ -544,7 +544,45 @@ final class AppModel: ObservableObject {
         return results.sorted { $0.bytes > $1.bytes }
     }
 
-    func executeRule(_ rule: MaintenanceRule, isLowSpaceTrigger: Bool = false) {
+    func calculateFolderSize(url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey],
+            options: [.skipsPackageDescendants],
+            errorHandler: nil
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        while let fileURL = enumerator.nextObject() as? URL {
+            if let vals = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey]),
+               vals.isRegularFile == true {
+                total += Int64(vals.totalFileAllocatedSize ?? vals.fileSize ?? 0)
+            }
+        }
+        return total
+    }
+
+    func getMountedExternalVolumes() -> [(name: String, path: String, freeBytes: Int64, totalBytes: Int64)] {
+        let keys: [URLResourceKey] = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey, .volumeIsInternalKey, .volumeIsRemovableKey]
+        guard let volumeURLs = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) else { return [] }
+
+        var results: [(name: String, path: String, freeBytes: Int64, totalBytes: Int64)] = []
+        for url in volumeURLs {
+            guard let vals = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            let isInternal = vals.volumeIsInternal ?? true
+            let name = vals.volumeName ?? url.lastPathComponent
+            let total = Int64(vals.volumeTotalCapacity ?? 0)
+            let free = Int64(vals.volumeAvailableCapacityForImportantUsage ?? 0)
+
+            // If not root / internal boot volume, or explicitly removable
+            if (!isInternal || vals.volumeIsRemovable == true) && url.path != "/" && total > 0 {
+                results.append((name: name, path: url.path, freeBytes: free, totalBytes: total))
+            }
+        }
+        return results
+    }
+
+    func executeRule(_ rule: MaintenanceRule, triggerReason: RuleTriggerReason = .manual) {
         let matching = findMatchingCandidates(for: rule)
         if matching.isEmpty {
             recordLogEntry(
@@ -552,7 +590,8 @@ final class AppModel: ObservableObject {
                 actionDescription: "No matching files met criteria.",
                 processedCount: 0,
                 reclaimedBytes: 0,
-                isLowSpace: isLowSpaceTrigger,
+                isLowSpace: triggerReason == .lowSystemStorage(thresholdGB: lowSpaceConfig.thresholdGB),
+                triggerReason: triggerReason,
                 error: nil
             )
             return
@@ -577,15 +616,16 @@ final class AppModel: ObservableObject {
                 }
             }
 
-        case .archiveToFolder:
+        case .moveToExternalDrive, .archiveToFolder, .copyToExternalDrive:
             guard let destFolder = rule.destinationFolderURL else {
                 recordLogEntry(
                     ruleName: rule.name,
-                    actionDescription: "Archive skipped",
+                    actionDescription: "Operation skipped",
                     processedCount: 0,
                     reclaimedBytes: 0,
-                    isLowSpace: isLowSpaceTrigger,
-                    error: "No destination archive folder specified."
+                    isLowSpace: false,
+                    triggerReason: triggerReason,
+                    error: "No destination folder/external drive specified."
                 )
                 return
             }
@@ -593,28 +633,53 @@ final class AppModel: ObservableObject {
             guard FileManager.default.fileExists(atPath: destFolder.path) else {
                 recordLogEntry(
                     ruleName: rule.name,
-                    actionDescription: "Archive skipped",
+                    actionDescription: "Operation deferred",
                     processedCount: 0,
                     reclaimedBytes: 0,
-                    isLowSpace: isLowSpaceTrigger,
-                    error: "Destination folder/drive is not connected or accessible at \(destFolder.path)."
+                    isLowSpace: false,
+                    triggerReason: triggerReason,
+                    error: "Target external drive or folder is not connected/mounted at \(destFolder.path)."
                 )
                 return
             }
 
+            // Determine destination directory (optionally organized by year-month)
+            let finalTargetDir: URL
+            if rule.organizeByYearMonth {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM"
+                let dateSubfolderName = formatter.string(from: Date())
+                finalTargetDir = destFolder.appendingPathComponent(dateSubfolderName, isDirectory: true)
+                try? FileManager.default.createDirectory(at: finalTargetDir, withIntermediateDirectories: true)
+            } else {
+                finalTargetDir = destFolder
+            }
+
             for candidate in matching {
-                let dest = uniqueDestination(for: candidate.url, in: destFolder)
+                let dest = uniqueDestination(for: candidate.url, in: finalTargetDir)
                 do {
-                    try FileManager.default.moveItem(at: candidate.url, to: dest)
-                    processedCount += 1
-                    reclaimedBytes += candidate.bytes
+                    if rule.targetAction == .copyToExternalDrive {
+                        try FileManager.default.copyItem(at: candidate.url, to: dest)
+                        processedCount += 1
+                        reclaimedBytes += candidate.bytes
+                    } else {
+                        // Move across volumes: copy then delete source
+                        if candidate.url.pathComponents.first != dest.pathComponents.first {
+                            try FileManager.default.copyItem(at: candidate.url, to: dest)
+                            try? FileManager.default.removeItem(at: candidate.url)
+                        } else {
+                            try FileManager.default.moveItem(at: candidate.url, to: dest)
+                        }
+                        processedCount += 1
+                        reclaimedBytes += candidate.bytes
+                    }
                 } catch {
                     errorMessages.append("“\(candidate.name)”: \(error.localizedDescription)")
                 }
             }
         }
 
-        if processedCount > 0 {
+        if processedCount > 0 && rule.targetAction != .copyToExternalDrive {
             remove(Array(matching.prefix(processedCount)))
         }
 
@@ -623,32 +688,50 @@ final class AppModel: ObservableObject {
         addOrUpdateRule(updatedRule)
 
         let errorText = errorMessages.isEmpty ? nil : errorMessages.joined(separator: "; ")
-        let actionDesc = "\(rule.targetAction.title): Processed \(processedCount) items (\(ByteText.string(reclaimedBytes)))"
+        let actionDesc = "\(rule.targetAction.title): Processed \(processedCount) items (\(ByteText.string(reclaimedBytes))) [\(triggerReason.displayLabel)]"
 
         recordLogEntry(
             ruleName: rule.name,
             actionDescription: actionDesc,
             processedCount: processedCount,
             reclaimedBytes: reclaimedBytes,
-            isLowSpace: isLowSpaceTrigger,
+            isLowSpace: false,
+            triggerReason: triggerReason,
             error: errorText
         )
 
         if rule.notifyOnExecution && notificationsEnabled {
             let content = UNMutableNotificationContent()
-            content.title = "Storage Pal Automated Maintenance"
-            content.body = "\(rule.name): Reclaimed \(ByteText.string(reclaimedBytes)) across \(processedCount) files."
+            content.title = "Storage Pal Automation: \(rule.name)"
+            content.body = "Transferred \(processedCount) file(s) (\(ByteText.string(reclaimedBytes))) • \(triggerReason.displayLabel)."
             content.sound = .default
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "rule-\(rule.id)-\(Date().timeIntervalSince1970)", content: content, trigger: nil))
         }
     }
 
+    func executeRule(_ rule: MaintenanceRule, isLowSpaceTrigger: Bool) {
+        executeRule(rule, triggerReason: isLowSpaceTrigger ? .lowSystemStorage(thresholdGB: lowSpaceConfig.thresholdGB) : .manual)
+    }
+
     func evaluateScheduledRules() {
         let now = Date()
-        for rule in maintenanceRules where rule.isEnabled && rule.schedule != .manual {
-            let lastRun = rule.lastRunDate ?? .distantPast
-            if now.timeIntervalSince(lastRun) >= rule.schedule.interval {
-                executeRule(rule)
+        for rule in maintenanceRules where rule.isEnabled {
+            // Check 1: Folder size limit trigger
+            if rule.enableFolderSizeTrigger {
+                let currentFolderBytes = calculateFolderSize(url: rule.sourceFolderURL)
+                if currentFolderBytes >= rule.folderSizeLimitBytes {
+                    let currentGB = Double(currentFolderBytes) / 1_000_000_000.0
+                    executeRule(rule, triggerReason: .folderSizeExceeded(currentSizeGB: currentGB, limitGB: rule.folderSizeLimitGB))
+                    continue
+                }
+            }
+
+            // Check 2: Time schedule trigger
+            if rule.schedule != .manual {
+                let lastRun = rule.lastRunDate ?? .distantPast
+                if now.timeIntervalSince(lastRun) >= rule.schedule.interval {
+                    executeRule(rule, triggerReason: .scheduled(schedule: rule.schedule.rawValue))
+                }
             }
         }
     }
@@ -670,7 +753,7 @@ final class AppModel: ObservableObject {
 
         if lowSpaceConfig.autoExecuteRules {
             for rule in maintenanceRules where rule.isEnabled {
-                executeRule(rule, isLowSpaceTrigger: true)
+                executeRule(rule, triggerReason: .lowSystemStorage(thresholdGB: lowSpaceConfig.thresholdGB))
             }
         }
 
@@ -683,7 +766,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func recordLogEntry(ruleName: String, actionDescription: String, processedCount: Int, reclaimedBytes: Int64, isLowSpace: Bool, error: String?) {
+    private func recordLogEntry(
+        ruleName: String,
+        actionDescription: String,
+        processedCount: Int,
+        reclaimedBytes: Int64,
+        isLowSpace: Bool,
+        triggerReason: RuleTriggerReason? = nil,
+        error: String?
+    ) {
         let entry = MaintenanceLogEntry(
             id: UUID().uuidString,
             timestamp: Date(),
@@ -692,6 +783,7 @@ final class AppModel: ObservableObject {
             filesProcessedCount: processedCount,
             reclaimedBytes: reclaimedBytes,
             wasTriggeredByLowSpace: isLowSpace,
+            triggerReason: triggerReason,
             errorDetails: error
         )
         maintenanceLogs.insert(entry, at: 0)

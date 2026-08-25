@@ -199,14 +199,43 @@ enum ByteText {
 }
 
 enum MaintenanceAction: String, Codable, CaseIterable, Identifiable {
+    case moveToExternalDrive = "moveToExternalDrive"
     case archiveToFolder = "archive"
+    case copyToExternalDrive = "copyToExternalDrive"
     case moveToTrash = "trash"
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .archiveToFolder: "Archive to folder / drive"
+        case .moveToExternalDrive: "Move to External Drive (Free Local Space)"
+        case .archiveToFolder: "Archive to Specific Folder"
+        case .copyToExternalDrive: "Copy to External Drive (Keep Local Source)"
         case .moveToTrash: "Move to Trash"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .moveToExternalDrive: "externaldrive.fill.badge.arrow.right"
+        case .archiveToFolder: "folder.badge.plus"
+        case .copyToExternalDrive: "doc.on.doc.fill"
+        case .moveToTrash: "trash.fill"
+        }
+    }
+}
+
+enum RuleTriggerReason: Codable, Hashable, Sendable {
+    case scheduled(schedule: String)
+    case folderSizeExceeded(currentSizeGB: Double, limitGB: Double)
+    case lowSystemStorage(thresholdGB: Double)
+    case manual
+
+    var displayLabel: String {
+        switch self {
+        case .scheduled(let sched): "Scheduled (\(sched.capitalized))"
+        case .folderSizeExceeded(let current, let limit): "Size Trigger (\(String(format: "%.1f", current)) GB > \(String(format: "%.1f", limit)) GB)"
+        case .lowSystemStorage(let threshold): "Low Mac Storage (< \(Int(threshold)) GB free)"
+        case .manual: "Manual Run"
         }
     }
 }
@@ -243,10 +272,52 @@ struct MaintenanceRule: Identifiable, Codable, Hashable {
     var minFileBytes: Int64
     var notifyOnExecution: Bool
     var lastRunDate: Date?
+    var enableFolderSizeTrigger: Bool
+    var folderSizeLimitGB: Double
+    var organizeByYearMonth: Bool
+    var externalVolumeName: String?
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        isEnabled: Bool = true,
+        sourceFolderURL: URL,
+        targetAction: MaintenanceAction = .moveToExternalDrive,
+        destinationFolderURL: URL? = nil,
+        schedule: MaintenanceSchedule = .weekly,
+        minAgeDays: Int = 14,
+        minFileBytes: Int64 = 0,
+        notifyOnExecution: Bool = true,
+        lastRunDate: Date? = nil,
+        enableFolderSizeTrigger: Bool = false,
+        folderSizeLimitGB: Double = 10.0,
+        organizeByYearMonth: Bool = true,
+        externalVolumeName: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.isEnabled = isEnabled
+        self.sourceFolderURL = sourceFolderURL
+        self.targetAction = targetAction
+        self.destinationFolderURL = destinationFolderURL
+        self.schedule = schedule
+        self.minAgeDays = minAgeDays
+        self.minFileBytes = minFileBytes
+        self.notifyOnExecution = notifyOnExecution
+        self.lastRunDate = lastRunDate
+        self.enableFolderSizeTrigger = enableFolderSizeTrigger
+        self.folderSizeLimitGB = folderSizeLimitGB
+        self.organizeByYearMonth = organizeByYearMonth
+        self.externalVolumeName = externalVolumeName
+    }
 
     var sourceFolderName: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return sourceFolderURL.path.replacingOccurrences(of: home, with: "~")
+    }
+
+    var folderSizeLimitBytes: Int64 {
+        Int64(folderSizeLimitGB * 1_000_000_000)
     }
 }
 
@@ -269,7 +340,30 @@ struct MaintenanceLogEntry: Identifiable, Codable, Hashable {
     let filesProcessedCount: Int
     let reclaimedBytes: Int64
     let wasTriggeredByLowSpace: Bool
+    let triggerReason: RuleTriggerReason?
     let errorDetails: String?
+
+    init(
+        id: String = UUID().uuidString,
+        timestamp: Date = Date(),
+        ruleName: String,
+        actionDescription: String,
+        filesProcessedCount: Int,
+        reclaimedBytes: Int64,
+        wasTriggeredByLowSpace: Bool = false,
+        triggerReason: RuleTriggerReason? = nil,
+        errorDetails: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.ruleName = ruleName
+        self.actionDescription = actionDescription
+        self.filesProcessedCount = filesProcessedCount
+        self.reclaimedBytes = reclaimedBytes
+        self.wasTriggeredByLowSpace = wasTriggeredByLowSpace
+        self.triggerReason = triggerReason
+        self.errorDetails = errorDetails
+    }
 }
 
 struct InstalledAppLeftover: Identifiable, Hashable {

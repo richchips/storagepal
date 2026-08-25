@@ -769,6 +769,67 @@ final class StoragePalTests: XCTestCase {
         XCTAssertTrue(report.totalLocalSSDBytes >= 0)
         XCTAssertTrue(report.totalEvictedCloudBytes >= 0)
     }
+
+    @MainActor
+    func testFolderSizeLimitTriggerAndExternalDriveMove() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("StoragePalTest_\(UUID().uuidString)")
+        let sourceDir = tempDir.appendingPathComponent("SourceFolder")
+        let destDir = tempDir.appendingPathComponent("ExternalDriveMock")
+
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        // Create sample test files
+        let file1 = sourceDir.appendingPathComponent("big_archive.zip")
+        let dummyData = Data(repeating: 0x41, count: 10_000)
+        try dummyData.write(to: file1)
+
+        let file2 = sourceDir.appendingPathComponent("test_doc.pdf")
+        try dummyData.write(to: file2)
+
+        let model = AppModel()
+        let calculatedSize = model.calculateFolderSize(url: sourceDir)
+        XCTAssertEqual(calculatedSize, 20_000)
+
+        // Create rule to move files to destDir
+        let rule = MaintenanceRule(
+            id: "test-ext-rule",
+            name: "Archive to Mock Drive",
+            isEnabled: true,
+            sourceFolderURL: sourceDir,
+            targetAction: .moveToExternalDrive,
+            destinationFolderURL: destDir,
+            schedule: .daily,
+            minAgeDays: 0,
+            minFileBytes: 0,
+            notifyOnExecution: false,
+            lastRunDate: nil,
+            enableFolderSizeTrigger: true,
+            folderSizeLimitGB: 0.00001, // ~10KB threshold
+            organizeByYearMonth: true
+        )
+
+        model.executeRule(rule, triggerReason: .folderSizeExceeded(currentSizeGB: 0.00002, limitGB: 0.00001))
+
+        // Verify files moved to destination subfolder
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        let dateFolder = destDir.appendingPathComponent(formatter.string(from: Date()))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dateFolder.path))
+
+        let destFile1 = dateFolder.appendingPathComponent("big_archive.zip")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destFile1.path))
+
+        // Verify source files are cleared
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file1.path))
+
+        // Verify log was recorded
+        XCTAssertTrue(model.maintenanceLogs.contains { $0.ruleName == "Archive to Mock Drive" })
+    }
 }
 
 
