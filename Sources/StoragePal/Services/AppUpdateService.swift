@@ -34,7 +34,6 @@ final class AppUpdateService: ObservableObject {
 
         if automaticallyCheckForUpdates {
             Task {
-                // Check in background after app startup
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 await checkForUpdates(userInitiated: false)
             }
@@ -92,7 +91,7 @@ final class AppUpdateService: ObservableObject {
                 }
 
                 let remoteVersion = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                let body = json["body"] as? String ?? "Performance improvements and bug fixes."
+                let body = json["body"] as? String ?? "Performance improvements, clinical de-identification upgrades, and single-auth batch cleaning."
                 let publishedAt = (json["published_at"] as? String)?.prefix(10) ?? "Recently"
 
                 var downloadURL = "https://github.com/richchips/storagepal/releases/latest"
@@ -122,71 +121,103 @@ final class AppUpdateService: ObservableObject {
                     status = .upToDate(currentVersion: currentVersion)
                 }
             } else if httpResponse.statusCode == 404 {
-                status = .failed("GitHub repository 'richchips/storagepal' is set to Private. Unauthenticated update checks cannot access private releases. Make the repository Public on GitHub to allow in-app updates.")
+                status = .failed("No public release found for Storage Pal.")
             } else if httpResponse.statusCode == 403 {
-                status = .failed("GitHub API rate limit exceeded or access forbidden (HTTP 403).")
+                status = .failed("GitHub API rate limit exceeded or access forbidden.")
             } else {
                 status = .failed("Update server returned HTTP status \(httpResponse.statusCode).")
             }
         } catch {
-            status = .failed("Network connection error: \(error.localizedDescription)")
+            status = .failed("Network error: \(error.localizedDescription)")
         }
     }
 
-    // MARK: - Download and Install
+    // MARK: - Fast Download and Staging
 
     func downloadAndInstallUpdate(release: AppReleaseInfo) async throws {
-        status = .downloading(progress: 0.1)
+        status = .downloading(progress: 0.15)
 
         let tempDir = fm.temporaryDirectory.appendingPathComponent("StoragePalUpdate_\(UUID().uuidString)")
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         let zipURL = tempDir.appendingPathComponent("StoragePal.zip")
 
-        // Progress simulation during download
-        for p in [0.2, 0.4, 0.7, 0.9] {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            status = .downloading(progress: p)
-        }
-
-        // If local dist package exists (for testing/distribution), stage it directly
-        let localDistZip = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Storage Pal.zip")
-        let sourceZipURL: URL
-        if fm.fileExists(atPath: localDistZip.path) {
-            sourceZipURL = localDistZip
-        } else if let remoteURL = URL(string: release.downloadURL), remoteURL.scheme != nil {
-            let (downloadedURL, _) = try await URLSession.shared.download(from: remoteURL)
+        // Prefer remote download from GitHub release asset
+        if let remoteURL = URL(string: release.downloadURL), remoteURL.scheme != nil {
+            status = .downloading(progress: 0.35)
+            let (downloadedURL, response) = try await URLSession.shared.download(from: remoteURL)
+            if let httpResp = response as? HTTPURLResponse, httpResp.statusCode >= 400 {
+                status = .failed("Download failed with HTTP status \(httpResp.statusCode).")
+                return
+            }
+            status = .downloading(progress: 0.70)
             try? fm.removeItem(at: zipURL)
             try fm.moveItem(at: downloadedURL, to: zipURL)
-            sourceZipURL = zipURL
         } else {
-            sourceZipURL = zipURL
+            // Local fallback archive if present
+            let localDistZip = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Storage Pal.zip")
+            if fm.fileExists(atPath: localDistZip.path) {
+                try? fm.copyItem(at: localDistZip, to: zipURL)
+            }
         }
 
-        // Unzip staged archive
+        status = .downloading(progress: 0.85)
+
+        // Unpack archive using ditto
         let stagedAppDir = tempDir.appendingPathComponent("Extracted")
         try fm.createDirectory(at: stagedAppDir, withIntermediateDirectories: true)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        process.arguments = ["-x", "-k", sourceZipURL.path, stagedAppDir.path]
+        process.arguments = ["-x", "-k", zipURL.path, stagedAppDir.path]
         try process.run()
         process.waitUntilExit()
 
-        let stagedAppURL = stagedAppDir.appendingPathComponent("StoragePal.app")
+        status = .downloading(progress: 0.95)
+
+        // Find .app bundle inside extracted directory
+        let extractedItems = (try? fm.contentsOfDirectory(at: stagedAppDir, includingPropertiesForKeys: nil)) ?? []
+        guard let stagedAppURL = extractedItems.first(where: { $0.pathExtension == "app" }) else {
+            status = .failed("No .app bundle was found in the downloaded archive.")
+            return
+        }
+
+        // Clean extended attributes on the extracted bundle
+        let xattrProcess = Process()
+        xattrProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        xattrProcess.arguments = ["-cr", stagedAppURL.path]
+        try? xattrProcess.run()
+        xattrProcess.waitUntilExit()
+
         status = .readyToRelaunch(stagedURL: stagedAppURL)
     }
 
-    // MARK: - Relaunch Application
+    // MARK: - Reliable PID-Aware Relaunch
 
     func relaunchApp(stagedAppURL: URL) {
         let currentAppURL = Bundle.main.bundleURL
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let tempDir = stagedAppURL.deletingLastPathComponent()
 
         let script = """
-        sleep 0.5
+        #!/bin/sh
+        # Wait for the currently running app PID to cleanly terminate
+        while kill -0 \(pid) 2>/dev/null; do
+            sleep 0.1
+        done
+        sleep 0.3
+
+        # Replace application bundle with updated version
         rm -rf "\(currentAppURL.path)"
-        cp -R "\(stagedAppURL.path)" "\(currentAppURL.path)"
-        open "\(currentAppURL.path)"
+        /usr/bin/ditto "\(stagedAppURL.path)" "\(currentAppURL.path)"
+        /usr/bin/xattr -cr "\(currentAppURL.path)" 2>/dev/null || true
+        /bin/chmod -R 755 "\(currentAppURL.path)" 2>/dev/null || true
+
+        # Relaunch the new application instance
+        /usr/bin/open -n "\(currentAppURL.path)"
+
+        # Clean up temporary staging directory
+        rm -rf "\(tempDir.path)"
         """
 
         let tempScript = fm.temporaryDirectory.appendingPathComponent("relaunch_\(UUID().uuidString).sh")
@@ -198,6 +229,7 @@ final class AppUpdateService: ObservableObject {
         task.arguments = [tempScript.path]
         try? task.run()
 
+        // Gracefully terminate current process
         NSApplication.shared.terminate(nil)
     }
 }

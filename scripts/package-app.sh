@@ -40,5 +40,5 @@ codesign --force --sign - "$APP_DIR"
 codesign -v "$APP_DIR"
 
 rm -f "$ZIP_PATH"
-ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+COPYFILE_DISABLE=1 ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 echo "Packaged: $ZIP_PATH"
