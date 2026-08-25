@@ -623,7 +623,6 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var clipboardGuard = ClipboardGuardService.shared
     @ObservedObject private var updateService = AppUpdateService.shared
-    @State private var isShowingUpdateSheet = false
 
     var body: some View {
         Form {
@@ -663,7 +662,6 @@ struct SettingsView: View {
                     Spacer()
 
                     Button("Check for Updates Now") {
-                        isShowingUpdateSheet = true
                         Task {
                             await updateService.checkForUpdates(userInitiated: true)
                         }
@@ -713,7 +711,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(12)
-        .sheet(isPresented: $isShowingUpdateSheet) {
+        .sheet(isPresented: $updateService.isPresented) {
             AppUpdateSheet()
         }
     }

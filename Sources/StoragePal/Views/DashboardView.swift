@@ -42,7 +42,6 @@ struct DashboardView: View {
     @ObservedObject private var clipboardGuard = ClipboardGuardService.shared
     @ObservedObject private var updateService = AppUpdateService.shared
     @State private var section: DashboardSection = .today
-    @State private var isShowingUpdateSheet = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -66,7 +65,7 @@ struct DashboardView: View {
                                 .font(.system(size: 12, weight: .semibold))
                             Spacer()
                             Button("What's New & Update…") {
-                                isShowingUpdateSheet = true
+                                updateService.isPresented = true
                             }
                             .buttonStyle(PalButtonStyle(prominent: true))
                         }
@@ -176,7 +175,7 @@ struct DashboardView: View {
             BrowserCleanerView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $isShowingUpdateSheet) {
+        .sheet(isPresented: $updateService.isPresented) {
             AppUpdateSheet()
         }
         .alert("Storage Pal", isPresented: Binding(
