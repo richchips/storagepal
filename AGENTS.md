@@ -58,6 +58,7 @@ Storage Pal/
         │   ├── PhotoQualityService.swift # Detects screenshot clutter, low-resolution accidental thumbnails, and blurry shots
         │   ├── PalVaultService.swift # CryptoKit AES-GCM-256 encrypted vault with Keychain Touch ID biometrics & auto-lock
         │   ├── MetadataSanitizerService.swift # Strips hidden EXIF, GPS coordinates, camera serials, and PDF revision history
+        │   ├── AIWatermarkSanitizerService.swift # Strips zero-width steganography, variation selectors, homoglyphs, and AI preambles
         │   ├── DocumentRedactionEngine.swift # Domain-specific regex/entity matching and true structural PDF redaction
         │   ├── AITokenSwapService.swift # AI Privacy Proxy: forward pseudonymization and reverse real-data restoration
         │   ├── AppUpdateService.swift # In-app software update checker, semver comparator, and staging/relaunch engine
@@ -112,6 +113,7 @@ Storage Pal/
 | [`PhotoQualityService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/PhotoQualityService.swift) | Detects accumulated screenshots on Desktop/Downloads and blurry/low-resolution photo clutter. | `PhotoQualityService` |
 | [`PalVaultService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/PalVaultService.swift) | CryptoKit AES-GCM-256 encrypted storage vault with Keychain Touch ID biometrics, sleep observation, and auto-lock. | `PalVaultService` |
 | [`MetadataSanitizerService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/MetadataSanitizerService.swift) | Strips hidden EXIF, GPS geolocation, camera metadata, and PDF revision histories before file sharing. | `MetadataSanitizerService` |
+| [`AIWatermarkSanitizerService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/AIWatermarkSanitizerService.swift) | Strips hidden zero-width spaces, variation selectors, homoglyphs, and AI conversational preambles from text & documents. | `AIWatermarkSanitizerService`, `AIWatermarkReport` |
 | [`DocumentRedactionEngine.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/DocumentRedactionEngine.swift) | Domain template regex/entity matching and true structural PDF redaction renderer. | `DocumentRedactionEngine` |
 | [`AITokenSwapService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/AITokenSwapService.swift) | AI Privacy Proxy: forward pseudonymization generator, encrypted local session vault, and reverse de-anonymizer. | `AITokenSwapService` |
 | [`SecureShredderService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/SecureShredderService.swift) | Performs permanent 3-pass DoD cryptographic overwriting (random bytes $\rightarrow$ complement pattern $\rightarrow$ zero-fill $\rightarrow$ `F_FULLFSYNC`). | `SecureShredderService` |

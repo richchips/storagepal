@@ -726,6 +726,85 @@ enum UpdateCheckStatus: Equatable, Sendable {
     }
 }
 
+// MARK: - AI Watermark & Steganography Models
+
+enum AIWatermarkKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case zeroWidthSteganography = "Zero-Width Steganography"
+    case variationSelector = "Variation Selector Markers"
+    case bidiControl = "Directional BiDi Markers"
+    case homoglyphLookalike = "Homoglyph Lookalike Substitution"
+    case aiChatbotSignature = "AI Chatbot Artifact / Preambles"
+    case metadataProvenance = "AI Model Provenance Tag"
+
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .zeroWidthSteganography: "eye.slash.fill"
+        case .variationSelector: "waveform.path.badge.minus"
+        case .bidiControl: "arrow.left.and.right.righttriangle.left.righttriangle.right"
+        case .homoglyphLookalike: "character.phonetic"
+        case .aiChatbotSignature: "bubble.left.and.bubble.right.fill"
+        case .metadataProvenance: "tag.fill"
+        }
+    }
+
+    var shortTag: String {
+        switch self {
+        case .zeroWidthSteganography: "ZW-HIDDEN"
+        case .variationSelector: "VS-MARKER"
+        case .bidiControl: "BIDI-CTRL"
+        case .homoglyphLookalike: "HOMOGLYPH"
+        case .aiChatbotSignature: "AI-CHAT"
+        case .metadataProvenance: "PROVENANCE"
+        }
+    }
+}
+
+struct AIWatermarkFinding: Identifiable, Hashable, Codable, Sendable {
+    var id: String { "\(kind.rawValue)-\(locationOffset)-\(rawSample)" }
+    let kind: AIWatermarkKind
+    let description: String
+    let rawSample: String
+    let cleanedReplacement: String
+    let locationOffset: Int
+    let occurrenceCount: Int
+}
+
+struct AIWatermarkCleaningOptions: Codable, Sendable, Hashable {
+    var stripInvisibleUnicode: Bool = true
+    var normalizeHomoglyphs: Bool = true
+    var stripAIPromptArtifacts: Bool = true
+    var normalizeWhitespace: Bool = true
+}
+
+struct AIWatermarkReport: Identifiable, Hashable, Sendable {
+    var id: String { sourceName + "-\(totalWatermarksFound)" }
+    let sourceName: String
+    let totalWatermarksFound: Int
+    let invisibleCharactersCount: Int
+    let homoglyphsCount: Int
+    let aiSignaturesCount: Int
+    let purifiedText: String
+    let rawWithVisualMarkers: String
+    let findings: [AIWatermarkFinding]
+    let steganographyConfidencePercent: Int
+
+    static var empty: AIWatermarkReport {
+        AIWatermarkReport(
+            sourceName: "Scratchpad",
+            totalWatermarksFound: 0,
+            invisibleCharactersCount: 0,
+            homoglyphsCount: 0,
+            aiSignaturesCount: 0,
+            purifiedText: "",
+            rawWithVisualMarkers: "",
+            findings: [],
+            steganographyConfidencePercent: 0
+        )
+    }
+}
+
 
 
 

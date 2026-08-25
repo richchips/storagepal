@@ -5,8 +5,15 @@ import UniformTypeIdentifiers
 
 private enum SanitizerTab: String, CaseIterable, Identifiable {
     case sanitize = "Metadata Stripper"
+    case aiWatermark = "AI Watermark Remover"
     case redact = "Redaction & AI Proxy"
     case shred = "Secure Shredder"
+    var id: String { rawValue }
+}
+
+private enum AIWatermarkInputMode: String, CaseIterable, Identifiable {
+    case scratchpad = "Text Scratchpad"
+    case documentFile = "Document File Scan"
     var id: String { rawValue }
 }
 
@@ -17,6 +24,14 @@ struct ConfidentialSanitizerView: View {
 
     // Metadata Sanitizer State
     @State private var inspectedItems: [SanitizerItem] = []
+
+    // AI Watermark Remover State
+    @State private var aiInputMode: AIWatermarkInputMode = .scratchpad
+    @State private var aiRawInputText: String = ""
+    @State private var aiWatermarkReport: AIWatermarkReport = .empty
+    @State private var aiCleaningOptions: AIWatermarkCleaningOptions = AIWatermarkCleaningOptions()
+    @State private var aiSourceFileURL: URL?
+    @State private var isShowingVisualMarkers: Bool = false
 
     // Redaction & AI Proxy State
     @State private var selectedTemplate: RedactionTemplateKind = .clinicalPsychology
@@ -44,6 +59,7 @@ struct ConfidentialSanitizerView: View {
     private let shredder = SecureShredderService()
     private let redactionEngine = DocumentRedactionEngine()
     private let tokenService = AITokenSwapService.shared
+    private let aiWatermarkService = AIWatermarkSanitizerService.shared
 
     var body: some View {
         ScrollView {
@@ -92,6 +108,8 @@ struct ConfidentialSanitizerView: View {
                 switch selectedTab {
                 case .sanitize:
                     sanitizerSection
+                case .aiWatermark:
+                    aiWatermarkSection
                 case .redact:
                     redactionSection
                 case .shred:
@@ -124,6 +142,7 @@ struct ConfidentialSanitizerView: View {
     private var tabTitle: String {
         switch selectedTab {
         case .sanitize: "Confidential Metadata Stripper"
+        case .aiWatermark: "AI Watermark & Steganography Purifier"
         case .redact: "Document Redaction & AI Privacy Proxy"
         case .shred: "Permanent DoD File Shredder"
         }
@@ -132,8 +151,322 @@ struct ConfidentialSanitizerView: View {
     private var tabDetail: String {
         switch selectedTab {
         case .sanitize: "Strip hidden GPS coordinates, camera serials, and author metadata from photos and PDFs before sharing."
+        case .aiWatermark: "Detect, visualize, and strip hidden zero-width markers, variation selectors, homoglyph lookalikes, and chatbot preambles from AI-generated text."
         case .redact: "Redact sensitive data with domain templates or swap real PII for synthetic tokens to safely query AI."
         case .shred: "Permanently obliterate confidential files with DoD 3-pass random and zero-fill cryptographic overwriting."
+        }
+    }
+
+    // MARK: - AI Watermark Remover Section
+
+    private var aiWatermarkSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Configuration & Rules Card
+            PalCard(padding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("AI WATERMARK CLEANING RULES", systemImage: "slider.horizontal.3")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(Color.palMint)
+                        Spacer()
+                        Picker("Input Mode", selection: $aiInputMode) {
+                            ForEach(AIWatermarkInputMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 260)
+                    }
+
+                    Divider()
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        Toggle("Strip Zero-Width & Hidden Unicode (U+200B, U+FEFF, ZWJ)", isOn: $aiCleaningOptions.stripInvisibleUnicode)
+                            .font(.system(size: 11))
+                            .onChange(of: aiCleaningOptions.stripInvisibleUnicode) { reanalyzeAIText() }
+
+                        Toggle("Normalize Confusable Homoglyphs (Cyrillic/Greek lookalikes)", isOn: $aiCleaningOptions.normalizeHomoglyphs)
+                            .font(.system(size: 11))
+                            .onChange(of: aiCleaningOptions.normalizeHomoglyphs) { reanalyzeAIText() }
+
+                        Toggle("Strip AI Chatbot Preambles & Disclaimers", isOn: $aiCleaningOptions.stripAIPromptArtifacts)
+                            .font(.system(size: 11))
+                            .onChange(of: aiCleaningOptions.stripAIPromptArtifacts) { reanalyzeAIText() }
+
+                        Toggle("Normalize Non-Breaking Whitespace & NFKC", isOn: $aiCleaningOptions.normalizeWhitespace)
+                            .font(.system(size: 11))
+                            .onChange(of: aiCleaningOptions.normalizeWhitespace) { reanalyzeAIText() }
+                    }
+                }
+            }
+
+            if aiInputMode == .scratchpad {
+                // Interactive Text Scratchpad Card
+                PalCard(padding: 18) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Text("PASTE AI-GENERATED TEXT")
+                                .font(.system(size: 11, weight: .bold))
+                                .tracking(1)
+                                .foregroundStyle(Color.palMint)
+
+                            Spacer()
+
+                            if !aiRawInputText.isEmpty {
+                                if aiWatermarkReport.totalWatermarksFound == 0 {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .foregroundStyle(Color.palMint)
+                                        Text("100% Watermark-Free & Clean")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(Color.palMint)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.palMint.opacity(0.12), in: Capsule())
+                                } else {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(.orange)
+                                        Text("\(aiWatermarkReport.totalWatermarksFound) AI Watermark(s) Detected (\(aiWatermarkReport.steganographyConfidencePercent)% Confidence)")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundStyle(.orange)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.orange.opacity(0.12), in: Capsule())
+                                }
+                            }
+                        }
+
+                        // Text input editor
+                        ZStack(alignment: .topLeading) {
+                            if aiRawInputText.isEmpty {
+                                Text("Paste text generated by ChatGPT, Claude, Gemini, Copilot, or LLMs here to detect and strip hidden zero-width characters, variation selectors, homoglyphs, and canned conversational intros…")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.palMuted)
+                                    .padding(8)
+                            }
+
+                            TextEditor(text: $aiRawInputText)
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(minHeight: 140, maxHeight: 200)
+                                .padding(4)
+                                .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.palCardBorder, lineWidth: 1)
+                                )
+                                .onChange(of: aiRawInputText) {
+                                    reanalyzeAIText()
+                                }
+                        }
+
+                        // Watermark Category Summary Pills
+                        if !aiRawInputText.isEmpty && aiWatermarkReport.totalWatermarksFound > 0 {
+                            HStack(spacing: 10) {
+                                if aiWatermarkReport.invisibleCharactersCount > 0 {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "eye.slash.fill")
+                                        Text("Zero-Width / Invisible: \(aiWatermarkReport.invisibleCharactersCount)")
+                                    }
+                                    .font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(.red)
+                                }
+
+                                if aiWatermarkReport.homoglyphsCount > 0 {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "character.phonetic")
+                                        Text("Homoglyphs: \(aiWatermarkReport.homoglyphsCount)")
+                                    }
+                                    .font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(.orange)
+                                }
+
+                                if aiWatermarkReport.aiSignaturesCount > 0 {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                                        Text("Chatbot Preambles: \(aiWatermarkReport.aiSignaturesCount)")
+                                    }
+                                    .font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(.purple)
+                                }
+                            }
+                        }
+
+                        // Preview / Purified Output Card
+                        if !aiRawInputText.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(isShowingVisualMarkers ? "RAW TEXT WITH VISUALIZED MARKERS" : "PURIFIED SANITIZED TEXT")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .tracking(1)
+                                        .foregroundStyle(Color.palMuted)
+                                    Spacer()
+                                    Toggle("Visualize Hidden Markers", isOn: $isShowingVisualMarkers)
+                                        .font(.system(size: 10))
+                                }
+
+                                ScrollView {
+                                    Text(isShowingVisualMarkers ? aiWatermarkReport.rawWithVisualMarkers : aiWatermarkReport.purifiedText)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .lineSpacing(3)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10)
+                                }
+                                .frame(height: 120)
+                                .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.palCardBorder, lineWidth: 1)
+                                )
+
+                                HStack(spacing: 12) {
+                                    Button("Clear") {
+                                        aiRawInputText = ""
+                                        aiWatermarkReport = .empty
+                                    }
+                                    .buttonStyle(PalButtonStyle())
+
+                                    Spacer()
+
+                                    Button {
+                                        copyPurifiedText()
+                                    } label: {
+                                        Label("Copy Purified Clean Text", systemImage: "doc.on.doc.fill")
+                                    }
+                                    .buttonStyle(PalButtonStyle(prominent: true))
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Document File Scan
+                VStack(alignment: .leading, spacing: 16) {
+                    dropZone(
+                        label: "Drop PDF, Markdown (.md), or Text (.txt) document here to strip AI watermarks",
+                        isShred: false,
+                        isRedaction: false,
+                        isAIWatermark: true
+                    )
+
+                    if let fileURL = aiSourceFileURL {
+                        PalCard(padding: 16) {
+                            HStack(alignment: .top, spacing: 14) {
+                                Image(systemName: fileURL.pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(Color.palMint)
+                                    .frame(width: 44, height: 44)
+                                    .background(Color.palMint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 8) {
+                                        Text(fileURL.lastPathComponent)
+                                            .font(.system(size: 13, weight: .bold))
+                                        Text(aiWatermarkReport.totalWatermarksFound == 0 ? "Clean" : "\(aiWatermarkReport.totalWatermarksFound) watermarks stripped")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(aiWatermarkReport.totalWatermarksFound == 0 ? Color.palMint.opacity(0.12) : Color.orange.opacity(0.12), in: Capsule())
+                                            .foregroundStyle(aiWatermarkReport.totalWatermarksFound == 0 ? Color.palMint : .orange)
+                                    }
+
+                                    if !aiWatermarkReport.findings.isEmpty {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            ForEach(aiWatermarkReport.findings.prefix(3)) { finding in
+                                                HStack(spacing: 6) {
+                                                    Text(finding.kind.shortTag)
+                                                        .font(.system(size: 8, weight: .bold))
+                                                        .padding(.horizontal, 4)
+                                                        .padding(.vertical, 1)
+                                                        .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                                        .foregroundStyle(.red)
+                                                    Text("\(finding.description) (\(finding.occurrenceCount)x)")
+                                                        .font(.system(size: 10))
+                                                        .foregroundStyle(Color.palMuted)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer()
+
+                                Button("Export Purified Copy…") {
+                                    exportPurifiedFile()
+                                }
+                                .buttonStyle(PalButtonStyle(prominent: true))
+
+                                Button {
+                                    aiSourceFileURL = nil
+                                    aiWatermarkReport = .empty
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func reanalyzeAIText() {
+        Task {
+            let report = await aiWatermarkService.analyzeAndSanitize(
+                text: aiRawInputText,
+                sourceName: "Scratchpad",
+                options: aiCleaningOptions
+            )
+            self.aiWatermarkReport = report
+        }
+    }
+
+    private func copyPurifiedText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(aiWatermarkReport.purifiedText, forType: .string)
+        statusMessage = "Copied purified clean text to clipboard (stripped \(aiWatermarkReport.totalWatermarksFound) watermarks)."
+    }
+
+    private func exportPurifiedFile() {
+        guard let sourceURL = aiSourceFileURL else { return }
+        let ext = sourceURL.pathExtension.lowercased()
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(sourceURL.deletingPathExtension().lastPathComponent)_ai_purified.\(ext)"
+        panel.prompt = "Save Clean Copy"
+
+        if panel.runModal() == .OK, let targetURL = panel.url {
+            Task {
+                do {
+                    let destDir = targetURL.deletingLastPathComponent()
+                    let (resultURL, report) = try await aiWatermarkService.sanitizeFile(
+                        at: sourceURL,
+                        destinationDirectory: destDir,
+                        options: aiCleaningOptions
+                    )
+                    if resultURL != targetURL {
+                        try? FileManager.default.removeItem(at: targetURL)
+                        try? FileManager.default.moveItem(at: resultURL, to: targetURL)
+                    }
+                    statusMessage = "Saved clean document (\(report.totalWatermarksFound) watermarks stripped) to \(targetURL.lastPathComponent)."
+                } catch {
+                    statusMessage = "Failed to export: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -244,59 +577,53 @@ struct ConfidentialSanitizerView: View {
                     isShred: false,
                     isRedaction: true
                 )
-
-                Button("Choose Document to Redact…") {
-                    chooseDocumentToRedact()
-                }
-                .buttonStyle(PalButtonStyle(prominent: true))
             }
         }
     }
 
     private func redactionDocumentCard(docURL: URL) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(spacing: 16) {
             PalCard(padding: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 14) {
-                        Image(systemName: docURL.pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text")
-                            .font(.system(size: 22))
-                            .foregroundStyle(Color.palMint)
-                            .frame(width: 40, height: 40)
-                            .background(Color.palMint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: docURL.pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text")
+                        .font(.system(size: 24))
+                        .foregroundStyle(Color.palMint)
+                        .frame(width: 44, height: 44)
+                        .background(Color.palMint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                Text(docURL.lastPathComponent)
-                                    .font(.system(size: 13, weight: .bold))
-                                Text("\(redactionMatches.count) sensitive item(s)")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Color.palMint)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.palMint.opacity(0.12), in: Capsule())
-
-                                if !manualRedactionBoxes.isEmpty {
-                                    Text("\(manualRedactionBoxes.count) manual blackout(s)")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(.orange)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.orange.opacity(0.12), in: Capsule())
-                                }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(docURL.lastPathComponent)
+                            .font(.system(size: 14, weight: .bold))
+                        HStack(spacing: 8) {
+                            Text("\(redactionMatches.count) sensitive items detected")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(redactionMatches.isEmpty ? Color.palMint : Color.palMint)
+                            if !manualRedactionBoxes.isEmpty {
+                                Text("• \(manualRedactionBoxes.count) manual boxes")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.palMuted)
                             }
-                            Text("Template: \(selectedTemplate.rawValue) • Mode: \(selectedRedactionMode.rawValue)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color.palMuted)
                         }
-
-                        Spacer()
-
-                        Button("Choose Another…") {
-                            chooseDocumentToRedact()
-                        }
-                        .buttonStyle(PalButtonStyle())
                     }
 
+                    Spacer()
+
+                    Button {
+                        previewURL = docURL
+                    } label: {
+                        Image(systemName: "eye")
+                    }
+                    .buttonStyle(PalButtonStyle())
+
+                    Button {
+                        redactionSourceURL = nil
+                        redactionMatches.removeAll()
+                        manualRedactionBoxes.removeAll()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
                     // Manual Drag-to-Redact Box Canvas Info
                     if docURL.pathExtension.lowercased() == "pdf" {
                         Divider()
@@ -357,11 +684,10 @@ struct ConfidentialSanitizerView: View {
                                     let h = abs(value.translation.height) / 140.0
                                     let x = min(value.startLocation.x, value.location.x) / 800.0
                                     let y = min(value.startLocation.y, value.location.y) / 140.0
-
                                     let box = ManualRedactionBox(
                                         id: UUID(),
-                                        rectNormalized: [min(1.0, max(0.0, x)), min(1.0, max(0.0, y)), min(1.0, max(0.05, w)), min(1.0, max(0.05, h))],
-                                        pageIndex: 1
+                                        rectNormalized: [Double(x), Double(y), Double(w), Double(h)],
+                                        pageIndex: 0
                                     )
                                     manualRedactionBoxes.append(box)
                                 }
@@ -459,6 +785,10 @@ struct ConfidentialSanitizerView: View {
     }
 
     private func chooseDocumentToRedact() {
+        chooseRedactionDocument()
+    }
+
+    private func chooseRedactionDocument() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -562,7 +892,8 @@ struct ConfidentialSanitizerView: View {
             dropZone(
                 label: "Drop photos or PDFs here to inspect & strip hidden metadata",
                 isShred: false,
-                isRedaction: false
+                isRedaction: false,
+                isAIWatermark: false
             )
 
             HStack {
@@ -648,110 +979,66 @@ struct ConfidentialSanitizerView: View {
         }
     }
 
-    private func metadataBadges(for report: SanitizerMetadataReport) -> some View {
-        HStack(spacing: 6) {
-            if report.hasGPS, let coords = report.gpsCoordinates {
-                HStack(spacing: 3) {
-                    Image(systemName: "location.fill")
-                    Text("GPS: \(coords)")
-                }
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.orange.opacity(0.12), in: Capsule())
-            }
-
-            if let camera = report.cameraModel {
-                HStack(spacing: 3) {
-                    Image(systemName: "camera.fill")
-                    Text(camera)
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(Color.palMuted)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.palMuted.opacity(0.1), in: Capsule())
-            }
-
-            if let author = report.author {
-                HStack(spacing: 3) {
-                    Image(systemName: "person.fill")
-                    Text(author)
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(Color.palMuted)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.palMuted.opacity(0.1), in: Capsule())
-            }
-
-            if report.tagsCount == 0 {
-                Text("Clean (No Sensitive Tags)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.palMint)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.palMint.opacity(0.12), in: Capsule())
-            }
-        }
-    }
-
-    // MARK: - Secure Shredder Section
+    // MARK: - Shredder Section
 
     private var shredderSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            PalCard(padding: 18) {
-                HStack(spacing: 14) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.red)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Permanent Destruction Protocol")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Standard macOS Trash deletion leaves magnetic data recoverable. Storage Pal Shredder performs 3-pass random byte and zero overwriting directly on the storage sectors.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.palMuted)
-                    }
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 18) {
             dropZone(
-                label: "Drop files here to permanently shred with 3-pass overwrite",
+                label: "Drop file here to permanently destroy and cryptographically overwrite",
                 isShred: true,
-                isRedaction: false
+                isRedaction: false,
+                isAIWatermark: false
             )
 
-            Button("Choose File to Permanently Shred…") {
-                chooseFileToShred()
+            HStack {
+                Button("Choose File to Shred…") {
+                    chooseFileToShred()
+                }
+                .buttonStyle(PalButtonStyle(prominent: true))
+                Spacer()
             }
-            .buttonStyle(PalButtonStyle(prominent: true))
+
+            PalCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .foregroundStyle(Color.palMint)
+                        Text("Permanent Overwrite Specification")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    Text("Storage Pal performs DoD 5220.22-M 3-pass sanitization: writing random cryptosequences, the bitwise complement, zero fills, and issuing hardware F_FULLFSYNC flushes.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMuted)
+                }
+            }
         }
     }
 
-    private func dropZone(label: String, isShred: Bool, isRedaction: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 12)
+    // MARK: - Drop Zone Helper
+
+    private func dropZone(label: String, isShred: Bool, isRedaction: Bool, isAIWatermark: Bool = false) -> some View {
+        RoundedRectangle(cornerRadius: 14)
             .strokeBorder(
-                isTargetedForDrop ? (isShred ? Color.red : Color.palMint) : Color.palCardBorder,
-                style: StrokeStyle(lineWidth: 2, dash: [6])
+                isShred ? Color.red.opacity(0.6) : (isTargetedForDrop ? Color.palMint : Color.palCardBorder),
+                style: StrokeStyle(lineWidth: 2, dash: [6, 4])
             )
             .background(
-                (isTargetedForDrop ? (isShred ? Color.red.opacity(0.08) : Color.palMint.opacity(0.08)) : Color.clear),
-                in: RoundedRectangle(cornerRadius: 12)
+                isShred ? Color.red.opacity(0.04) : (isTargetedForDrop ? Color.palMint.opacity(0.06) : Color.white.opacity(0.4)),
+                in: RoundedRectangle(cornerRadius: 14)
             )
-            .frame(height: 90)
+            .frame(height: 110)
             .overlay(
-                HStack(spacing: 12) {
-                    Image(systemName: isShred ? "flame.fill" : (isRedaction ? "scissors" : "arrow.down.doc.fill"))
-                        .font(.system(size: 22))
-                        .foregroundStyle(isShred ? .red : (isTargetedForDrop ? Color.palMint : Color.palMuted))
+                VStack(spacing: 8) {
+                    Image(systemName: isShred ? "flame.fill" : (isAIWatermark ? "sparkles.rectangle.stack" : (isRedaction ? "doc.text.magnifyingglass" : "arrow.down.doc.fill")))
+                        .font(.system(size: 24))
+                        .foregroundStyle(isShred ? .red : Color.palMint)
                     Text(label)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(isShred ? .red : (isTargetedForDrop ? Color.palMint : Color.palMuted))
                 }
             )
             .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
-                handleDroppedFiles(providers, isShred: isShred, isRedaction: isRedaction)
+                handleDroppedFiles(providers, isShred: isShred, isRedaction: isRedaction, isAIWatermark: isAIWatermark)
                 return true
             }
     }
@@ -843,7 +1130,7 @@ struct ConfidentialSanitizerView: View {
         }
     }
 
-    private func handleDroppedFiles(_ providers: [NSItemProvider], isShred: Bool, isRedaction: Bool) {
+    private func handleDroppedFiles(_ providers: [NSItemProvider], isShred: Bool, isRedaction: Bool, isAIWatermark: Bool = false) {
         for provider in providers {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                 guard let data = item as? Data,
@@ -852,6 +1139,16 @@ struct ConfidentialSanitizerView: View {
                     if isShred {
                         self.shredTarget = url
                         self.isShowingShredConfirmation = true
+                    } else if isAIWatermark {
+                        self.aiSourceFileURL = url
+                        self.aiInputMode = .documentFile
+                        if let content = try? String(contentsOf: url, encoding: .utf8) {
+                            self.aiWatermarkReport = await self.aiWatermarkService.analyzeAndSanitize(
+                                text: content,
+                                sourceName: url.lastPathComponent,
+                                options: self.aiCleaningOptions
+                            )
+                        }
                     } else if isRedaction {
                         self.redactionSourceURL = url
                         self.reanalyzeRedactionDocument()
@@ -867,6 +1164,38 @@ struct ConfidentialSanitizerView: View {
                         self.inspectedItems.append(sanitizerItem)
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func metadataBadges(for report: SanitizerMetadataReport) -> some View {
+        HStack(spacing: 8) {
+            if report.hasGPS {
+                Label(report.gpsCoordinates ?? "GPS Geolocation", systemImage: "location.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.red.opacity(0.12), in: Capsule())
+            }
+
+            if let camera = report.cameraModel {
+                Label(camera, systemImage: "camera.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.palMuted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.palMist, in: Capsule())
+            }
+
+            if let author = report.author {
+                Label(author, systemImage: "person.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.palMuted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.palMist, in: Capsule())
             }
         }
     }

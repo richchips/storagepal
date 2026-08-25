@@ -3,6 +3,22 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.16.0] - 2026-08-25
+
+### Added
+- **AI Watermark & Steganography Purifier (`AIWatermarkSanitizerService` & `ConfidentialSanitizerView`)**:
+  - **Zero-Width Steganography Stripper**: Detects and eliminates hidden `U+200B` (Zero-Width Space), `U+200C` (Non-Joiner), `U+200D` (Joiner), `U+FEFF` (BOM/No-Break Space), `U+2060` (Word Joiner), `U+00AD` (Soft Hyphen), and BiDi direction controls (`U+200E`, `U+200F`, `U+202A`–`U+202E`, `U+2066`–`U+2069`).
+  - **Variation Selector Eliminator**: Strips steganographic bit sequences encoded in Unicode Variation Selectors (`U+FE00`–`U+FE0F`, `U+E0100`–`U+E01EF`).
+  - **Homoglyph & Confusable Normalizer**: Identifies covert Cyrillic/Greek lookalikes (`а`, `е`, `о`, `р`, `с`, `у`, `х`, `і`, `А`, `В`, `Е`, `К`, `М`, `Н`, `О`, `Р`, `С`, `Т`, `Х`) injected into English words and restores standard ASCII/Latin characters with NFKC canonical normalization.
+  - **AI Chatbot Artifact & Preamble Remover**: Automatically detects and trims canned LLM intros (*"As an AI language model..."*, *"Certainly! Here is..."*, *"Sure, here is the..."*) and conversational sign-offs (*"I hope this helps!"*, *"Let me know if you have any questions."*).
+  - **Interactive Text Scratchpad**: Real-time watermark detector badge (*"100% Watermark-Free"* vs *"X AI Watermark(s) Detected with Y% confidence"*), category summary pills, side-by-side visualizer highlighting hidden markers (`[ZW-SPACE]`, `[VS-TAG]`, `[ZW-BOM]`), and 1-click **"Copy Purified Clean Text"**.
+  - **Document & PDF Cleaner**: Deep watermark stripper and metadata scrubber for `.txt`, `.md`, and `.pdf` files.
+- **Fast, Streamlined In-App Auto-Updater**:
+  - Direct streaming async download via `URLSession.download` for fast 1–2 second updates.
+  - Detached PID-aware background replacement script and clean `exit(0)` termination ensuring immediate, reliable 1-click relaunch.
+
+---
+
 ## [0.15.0] - 2026-08-25
 
 ### Added
