@@ -201,20 +201,34 @@ final class AppUpdateService: ObservableObject {
 
         let script = """
         #!/bin/sh
-        # Wait for the currently running app PID to cleanly terminate
+        exec > "/tmp/storagepal_updater.log" 2>&1
+        echo "=== Storage Pal Updater Started at $(date) ==="
+        echo "Old PID: \(pid)"
+        echo "Current App: \(currentAppURL.path)"
+        echo "Staged App: \(stagedAppURL.path)"
+
+        # Wait for the currently running app PID to cleanly terminate (up to 4s)
+        WAITED=0
         while kill -0 \(pid) 2>/dev/null; do
             sleep 0.1
+            WAITED=$((WAITED + 1))
+            if [ $WAITED -ge 40 ]; then
+                echo "Process still running after 4s, sending SIGKILL..."
+                kill -9 \(pid) 2>/dev/null || true
+                break
+            fi
         done
-        sleep 0.3
+        sleep 0.2
 
-        # Replace application bundle with updated version
+        echo "Swapping application bundle..."
         rm -rf "\(currentAppURL.path)"
         /usr/bin/ditto "\(stagedAppURL.path)" "\(currentAppURL.path)"
         /usr/bin/xattr -cr "\(currentAppURL.path)" 2>/dev/null || true
         /bin/chmod -R 755 "\(currentAppURL.path)" 2>/dev/null || true
 
-        # Relaunch the new application instance
-        /usr/bin/open -n "\(currentAppURL.path)"
+        echo "Relaunching updated app..."
+        /usr/bin/open "\(currentAppURL.path)"
+        echo "Update complete!"
 
         # Clean up temporary staging directory
         rm -rf "\(tempDir.path)"
@@ -224,12 +238,15 @@ final class AppUpdateService: ObservableObject {
         try? script.write(to: tempScript, atomically: true, encoding: .utf8)
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tempScript.path)
 
+        // Launch detached process so it survives application termination
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = [tempScript.path]
+        task.arguments = ["-c", "nohup /bin/sh '\(tempScript.path)' >/tmp/storagepal_updater.log 2>&1 &"]
         try? task.run()
 
-        // Gracefully terminate current process
-        NSApplication.shared.terminate(nil)
+        // Force immediate exit so the updater script can swap and relaunch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            exit(0)
+        }
     }
 }
