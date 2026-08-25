@@ -538,6 +538,135 @@ final class StoragePalTests: XCTestCase {
             return false
         }())
     }
+
+    // MARK: - Clinical De-Identification QA Benchmarks
+
+    func testClinicalDirectNameDetection() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let sample = "Client Sam R. attended initial psychology assessment with Dr. Jane Doe."
+        let matches = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let names = matches.filter { $0.category.contains("Name") || $0.category.contains("Person") }
+        XCTAssertTrue(names.contains(where: { $0.originalText.contains("Sam R.") }), "Sam R. must be detected as a direct identifier.")
+        XCTAssertTrue(names.contains(where: { $0.originalText.contains("Dr. Jane Doe") || $0.originalText.contains("Jane Doe") }), "Dr. Jane Doe must be detected.")
+
+        let tokenized = await engine.redactText(originalText: sample, matches: matches, mode: .aiTokenSwap)
+        XCTAssertFalse(tokenized.contains("Sam R."), "Direct name 'Sam R.' must be replaced by a token.")
+        XCTAssertTrue(tokenized.contains("[PERSON_1]"))
+    }
+
+    func testClinicalCommonWordPrecision() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let sample = "Footer: Fictional training material - not a real clinical record"
+        let matches = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        XCTAssertFalse(matches.contains(where: { $0.originalText.lowercased() == "record" }), "'record' must never trigger a false-positive patient ID.")
+        XCTAssertEqual(matches.count, 0, "Common footer text should produce zero false positives.")
+    }
+
+    func testClinicalDosagePreservation() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let sample = "Currently prescribed sertraline 50 mg by GP, started around 7 weeks ago. PHQ-9 score 14."
+        let matches = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let tokenized = await engine.redactText(originalText: sample, matches: matches, mode: .aiTokenSwap)
+        XCTAssertTrue(tokenized.contains("sertraline 50 mg"), "Medication dosage must be preserved for clinical formulation.")
+        XCTAssertTrue(tokenized.contains("PHQ-9 score 14"), "Psychometric scores must remain intact.")
+    }
+
+    func testQuasiIdentifierHandlingByPolicy() async {
+        let engine = DocumentRedactionEngine()
+
+        let sample = "Assessment on Date 25/08/2026 for client aged Age 36."
+
+        // Internal Clinical Mode (Quasi-identifiers preserved)
+        var mapInternal: [String: String] = [:]
+        var countersInternal: [String: Int] = [:]
+        let matchesInternal = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &mapInternal,
+            tokenCounters: &countersInternal
+        )
+        let tokenizedInternal = await engine.redactText(originalText: sample, matches: matchesInternal, mode: .aiTokenSwap)
+        XCTAssertTrue(tokenizedInternal.contains("25/08/2026"), "Internal mode preserves exact date.")
+        XCTAssertTrue(tokenizedInternal.contains("36"), "Internal mode preserves exact age.")
+
+        // External Research Mode (Quasi-identifiers tokenized)
+        var mapStrict: [String: String] = [:]
+        var countersStrict: [String: Int] = [:]
+        let matchesStrict = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .externalResearch,
+            sharedEntityTokenMap: &mapStrict,
+            tokenCounters: &countersStrict
+        )
+        let tokenizedStrict = await engine.redactText(originalText: sample, matches: matchesStrict, mode: .aiTokenSwap)
+        XCTAssertFalse(tokenizedStrict.contains("25/08/2026"), "Strict mode tokenizes exact date.")
+        XCTAssertTrue(tokenizedStrict.contains("[DATE_1]"))
+        XCTAssertTrue(tokenizedStrict.contains("[AGE_1]"))
+    }
+
+    func testEntityConsistencyAndIdempotency() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let sample = "Client Sam R. met with counselor. Sam R. reported mood improvement. Later, Sam R. completed review."
+        let matches = await engine.scanText(
+            text: sample,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let tokenized = await engine.redactText(originalText: sample, matches: matches, mode: .aiTokenSwap)
+        XCTAssertEqual(counters["PERSON"], 1, "Repeated occurrences of 'Sam R.' must use the same token [PERSON_1].")
+        XCTAssertFalse(tokenized.contains("Sam R."))
+        XCTAssertTrue(tokenized.contains("[PERSON_1]"))
+
+        // Idempotency: scanning already tokenized text
+        var entityMap2: [String: String] = [:]
+        var counters2: [String: Int] = [:]
+        let secondPassMatches = await engine.scanText(
+            text: tokenized,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap2,
+            tokenCounters: &counters2
+        )
+        XCTAssertEqual(secondPassMatches.count, 0, "Sanitizer must be idempotent on existing bracketed tokens.")
+    }
 }
 
 

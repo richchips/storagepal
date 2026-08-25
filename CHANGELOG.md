@@ -3,6 +3,24 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.15.0] - 2026-08-25
+
+### Added
+- **Clinical & High-Recall De-Identification Upgrades (`DocumentRedactionEngine`)**:
+  - **High-Recall Direct Identifier Detection**: Integrated Apple's `NaturalLanguage` ML named entity recognition (`NLTagger`) alongside structured clinical headers (`Client Sam R.`, `Patient: Sam R.`, `Assessor: Dr. Jane Doe`, `Dr. Smith`, `Mr. Jones`) to reliably detect full and abbreviated names (resolving false negatives on `"Sam R."`).
+  - **Strict Patient ID Precision & Stop-Word Filtering**: Constrained MRN/Hospital numbers and NHS 10-digit IDs with digit requirements and clinical stop-words, preventing common words (e.g. `"record"`, `"notes"`, `"assessment"`) from triggering false positives.
+  - **Preserve Clinical Meaning**: Retained medication names, dosages (`sertraline 50 mg`), symptoms, and psychometric scores (`PHQ-9`, `GAD-7`) without indiscriminate redaction.
+  - **Configurable Privacy Policy Tiers (`PrivacyPolicyTier`)**:
+    - 🩺 **Internal Clinical (Standard)**: Replaces direct identifiers with stable tokens; preserves clinical meaning, dates, and dosages.
+    - 🔬 **External Research / Public (Strict)**: Replaces direct identifiers plus quasi-identifiers (exact dates $\rightarrow$ `[DATE_1]`, exact ages $\rightarrow$ `[AGE_1]`, specific locations $\rightarrow$ `[LOCATION_1]`).
+  - **Dual Output Semantics**: Solid rasterized blackout PDF (0% extractable text) vs readable styled token badge PDF/Text with local session mapping.
+  - **Entity Consistency & Idempotency**: Unified entity token map across multi-page documents and idempotency guard against re-tokenizing bracketed placeholders.
+- **Single-Prompt Batch Authorization in App Cleaner (`FileTrashService` & `AppUninstallerView`)**:
+  - Bundles all protected leftovers requiring elevated privileges into a single atomic authorization script.
+  - 1-click **"Allow All & Clean Leftovers"** / **"Allow All & Move to Trash"** so users only confirm once with Touch ID or password.
+
+---
+
 ## [0.14.0] - 2026-08-24
 
 ### Added

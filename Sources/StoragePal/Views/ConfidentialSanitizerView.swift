@@ -19,7 +19,8 @@ struct ConfidentialSanitizerView: View {
     @State private var inspectedItems: [SanitizerItem] = []
 
     // Redaction & AI Proxy State
-    @State private var selectedTemplate: RedactionTemplateKind = .financial
+    @State private var selectedTemplate: RedactionTemplateKind = .clinicalPsychology
+    @State private var selectedPrivacyPolicy: PrivacyPolicyTier = .internalClinical
     @State private var selectedRedactionMode: RedactionMode = .aiTokenSwap
     @State private var selectedAIPromptRole: AIPromptRolePreset = .general
     @State private var redactionSourceURL: URL?
@@ -124,7 +125,7 @@ struct ConfidentialSanitizerView: View {
         switch selectedTab {
         case .sanitize: "Confidential Metadata Stripper"
         case .redact: "Document Redaction & AI Privacy Proxy"
-        case .shred: "Permanent File Shredder"
+        case .shred: "Permanent DoD File Shredder"
         }
     }
 
@@ -163,7 +164,25 @@ struct ConfidentialSanitizerView: View {
                         Divider()
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("REDACTION MODE")
+                            Text("PRIVACY POLICY")
+                                .font(.system(size: 9, weight: .bold))
+                                .tracking(1)
+                                .foregroundStyle(Color.palMint)
+                            Picker("", selection: $selectedPrivacyPolicy) {
+                                ForEach(PrivacyPolicyTier.allCases) { p in
+                                    Text(p.rawValue).tag(p)
+                                }
+                            }
+                            .labelsHidden()
+                            .onChange(of: selectedPrivacyPolicy) {
+                                reanalyzeRedactionDocument()
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("OUTPUT MODE")
                                 .font(.system(size: 9, weight: .bold))
                                 .tracking(1)
                                 .foregroundStyle(Color.palMint)
@@ -193,9 +212,14 @@ struct ConfidentialSanitizerView: View {
                         }
                     }
 
-                    Text(selectedTemplate.defaultDescription)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.palMuted)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(selectedTemplate.defaultDescription)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMuted)
+                        Text("Policy: \(selectedPrivacyPolicy.summary)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.palMint)
+                    }
 
                     if selectedTemplate == .custom {
                         VStack(alignment: .leading, spacing: 6) {
@@ -377,6 +401,15 @@ struct ConfidentialSanitizerView: View {
                                     .padding(.vertical, 2)
                                     .background(Color.palMint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
 
+                                if match.tier == .quasiIdentifier {
+                                    Text("Quasi-ID")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.orange)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.orange.opacity(0.12), in: Capsule())
+                                }
+
                                 Text(match.originalText)
                                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
 
@@ -445,6 +478,7 @@ struct ConfidentialSanitizerView: View {
             let (matches, text) = await redactionEngine.scanDocument(
                 at: url,
                 template: selectedTemplate,
+                policy: selectedPrivacyPolicy,
                 customKeywords: keywords,
                 customRegex: customRegexText.isEmpty ? nil : customRegexText
             )

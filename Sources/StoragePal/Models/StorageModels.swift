@@ -524,19 +524,42 @@ struct NetworkShareTarget: Identifiable, Hashable, Sendable {
 
 // MARK: - Redaction & AI Token Swap Models
 
+enum PrivacyPolicyTier: String, CaseIterable, Identifiable, Codable, Sendable {
+    case internalClinical = "Internal Clinical (Standard)"
+    case externalResearch = "External Research / Public (Strict)"
+
+    var id: String { rawValue }
+
+    var summary: String {
+        switch self {
+        case .internalClinical:
+            return "Replaces direct identifiers (names, patient IDs, addresses, contact details) with tokens while preserving clinical meaning, dates, and dosages."
+        case .externalResearch:
+            return "Strict de-identification: tokenizes direct identifiers plus quasi-identifiers (exact dates, exact ages, specific localities)."
+        }
+    }
+}
+
+enum SensitiveEntityTier: String, Codable, Sendable {
+    case directIdentifier = "Direct Identifier (Tier 1)"
+    case quasiIdentifier = "Quasi-Identifier (Tier 2)"
+}
+
 enum RedactionTemplateKind: String, CaseIterable, Identifiable, Sendable {
+    case clinicalPsychology = "Clinical Notes & Psychology"
+    case medical = "Medical & Health"
     case financial = "Financial & Tax"
     case legal = "Legal & Contracts"
-    case medical = "Medical & Health"
     case hr = "HR & Resumes"
     case custom = "Custom Keyword & Regex"
 
     var id: String { rawValue }
     var symbol: String {
         switch self {
+        case .clinicalPsychology: "brain.head.profile"
+        case .medical: "cross.case"
         case .financial: "banknote"
         case .legal: "scale.3d"
-        case .medical: "cross.case"
         case .hr: "person.crop.rectangle.badge.plus"
         case .custom: "slider.horizontal.3"
         }
@@ -544,9 +567,10 @@ enum RedactionTemplateKind: String, CaseIterable, Identifiable, Sendable {
 
     var defaultDescription: String {
         switch self {
+        case .clinicalPsychology: "Detects Client Names, Patient/NHS/MRN IDs, Addresses, and Contact Info while strictly preserving clinical formulation, symptoms, and medication doses."
+        case .medical: "Detects & masks Patient Names, Dates of Birth, MRN/NHS Numbers, Addresses, and Provider details."
         case .financial: "Detects & masks SSN, Tax IDs, Bank Accounts, IBANs, Credit Cards, and Salary figures."
         case .legal: "Detects & masks Client Names, Settlement Amounts, Signatures, and Internal Case Numbers."
-        case .medical: "Detects & masks Patient Names, Dates of Birth, MRN/NHS Numbers, Prescriptions, and Diagnosis tags."
         case .hr: "Detects & masks Home Addresses, Personal Phones, Personal Emails, Age, and Past Salaries."
         case .custom: "Redacts user-specified custom keywords, codenames, and regular expression patterns."
         }
@@ -575,6 +599,25 @@ struct SensitiveEntityMatch: Identifiable, Hashable, Sendable {
     let tokenReplacement: String
     let pageIndex: Int
     var isEnabled: Bool
+    var tier: SensitiveEntityTier
+
+    init(
+        id: String = UUID().uuidString,
+        category: String,
+        originalText: String,
+        tokenReplacement: String,
+        pageIndex: Int = 1,
+        isEnabled: Bool = true,
+        tier: SensitiveEntityTier = .directIdentifier
+    ) {
+        self.id = id
+        self.category = category
+        self.originalText = originalText
+        self.tokenReplacement = tokenReplacement
+        self.pageIndex = pageIndex
+        self.isEnabled = isEnabled
+        self.tier = tier
+    }
 }
 
 struct TokenSwapSession: Identifiable, Hashable, Codable, Sendable {
