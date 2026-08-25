@@ -805,6 +805,96 @@ struct AIWatermarkReport: Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - Statistical Watermark & Token Bias Countermeasures
+
+enum HumanizationLevel: String, CaseIterable, Identifiable, Codable, Sendable {
+    case lightDesync = "Light: Token Bias & Transition Desync"
+    case balanced = "Balanced: Cadence & Buzzword Neutralizer"
+    case deepNatural = "Deep: Structural Humanization & Anti-Detector"
+
+    var id: String { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .lightDesync: "Light Desync"
+        case .balanced: "Balanced Naturalizer"
+        case .deepNatural: "Deep Anti-Detector"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .lightDesync: "bolt.fill"
+        case .balanced: "sparkles"
+        case .deepNatural: "shield.checkered"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .lightDesync:
+            "Perturbs 10–15% of connector words and transition verbs to break deterministic n-gram hash chains while preserving 100% of exact prose."
+        case .balanced:
+            "Neutralizes 150+ statistical AI buzzwords (delve, tapestry, crucial, foster), disrupts n-gram hashes, and injects natural sentence rhythm."
+        case .deepNatural:
+            "Applies full syntactic restructuring, clause re-ordering, burstiness modulation, and vocabulary diversification to defeat statistical detectors."
+        }
+    }
+}
+
+enum WatermarkRiskLevel: String, Codable, Sendable {
+    case low = "Low Risk"
+    case moderate = "Moderate Risk"
+    case high = "High Risk"
+
+    var color: Color {
+        switch self {
+        case .low: Color.palMint
+        case .moderate: .orange
+        case .high: .red
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .low: "checkmark.shield.fill"
+        case .moderate: "exclamationmark.triangle.fill"
+        case .high: "shield.slash.fill"
+        }
+    }
+}
+
+struct TokenPerturbation: Identifiable, Hashable, Codable, Sendable {
+    var id: String { "\(originalWord)-\(offset)-\(replacementWord)" }
+    let originalWord: String
+    let replacementWord: String
+    let reason: String
+    let offset: Int
+}
+
+struct StatisticalWatermarkMetrics: Hashable, Sendable {
+    let wordCount: Int
+    let sentenceCount: Int
+    let burstinessScore: Double // Standard deviation of sentence length (Human > 8.0, AI < 4.0)
+    let aiVocabularyDensityPercent: Double // Percentage of words that are telltale AI clichés
+    let estimatedZScore: Double // Estimated detection z-score (z > 2.0 indicates watermarked text)
+    let tokenBiasRisk: WatermarkRiskLevel
+    let detectedAIKeywords: [String]
+
+    static var empty: StatisticalWatermarkMetrics {
+        StatisticalWatermarkMetrics(
+            wordCount: 0,
+            sentenceCount: 0,
+            burstinessScore: 0,
+            aiVocabularyDensityPercent: 0,
+            estimatedZScore: 0,
+            tokenBiasRisk: .low,
+            detectedAIKeywords: []
+        )
+    }
+}
+
+
 
 
 

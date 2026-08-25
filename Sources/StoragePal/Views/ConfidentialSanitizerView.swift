@@ -32,6 +32,9 @@ struct ConfidentialSanitizerView: View {
     @State private var aiCleaningOptions: AIWatermarkCleaningOptions = AIWatermarkCleaningOptions()
     @State private var aiSourceFileURL: URL?
     @State private var isShowingVisualMarkers: Bool = false
+    @State private var selectedHumanizationLevel: HumanizationLevel = .balanced
+    @State private var statisticalMetrics: StatisticalWatermarkMetrics = .empty
+    @State private var tokenPerturbations: [TokenPerturbation] = []
 
     // Redaction & AI Proxy State
     @State private var selectedTemplate: RedactionTemplateKind = .clinicalPsychology
@@ -335,6 +338,8 @@ struct ConfidentialSanitizerView: View {
                                     Button("Clear") {
                                         aiRawInputText = ""
                                         aiWatermarkReport = .empty
+                                        statisticalMetrics = .empty
+                                        tokenPerturbations.removeAll()
                                     }
                                     .buttonStyle(PalButtonStyle())
 
@@ -348,6 +353,130 @@ struct ConfidentialSanitizerView: View {
                                     .buttonStyle(PalButtonStyle(prominent: true))
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Statistical Token Bias Countermeasure Card
+                if !aiRawInputText.isEmpty {
+                    PalCard(padding: 16) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            HStack {
+                                Label("STATISTICAL TOKEN BIAS & CLAUDE/GPT WATERMARK COUNTERMEASURE", systemImage: "shield.checkered")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.palMint)
+                                Spacer()
+                                HStack(spacing: 6) {
+                                    Image(systemName: statisticalMetrics.tokenBiasRisk.icon)
+                                        .foregroundStyle(statisticalMetrics.tokenBiasRisk.color)
+                                    Text(statisticalMetrics.tokenBiasRisk.rawValue)
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(statisticalMetrics.tokenBiasRisk.color)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(statisticalMetrics.tokenBiasRisk.color.opacity(0.12), in: Capsule())
+                            }
+
+                            Text("Neutralizes Aaronson/Kirchenbauer green-list token scoring and low burstiness by desynchronizing n-gram transition hashes, removing AI clichés, and injecting natural sentence cadence.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
+
+                            // Metrics Grid
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("BURSTINESS (σ)")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(Color.palMuted)
+                                    Text("\(statisticalMetrics.burstinessScore, specifier: "%.1f")")
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundStyle(statisticalMetrics.burstinessScore > 7.0 ? Color.palMint : .orange)
+                                    Text(statisticalMetrics.burstinessScore > 7.0 ? "Natural Rhythm" : "Low Variance (AI)")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(Color.palMuted)
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("AI VOCAB DENSITY")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(Color.palMuted)
+                                    Text("\(statisticalMetrics.aiVocabularyDensityPercent, specifier: "%.1f")%")
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundStyle(statisticalMetrics.aiVocabularyDensityPercent > 2.0 ? .red : Color.palMint)
+                                    Text("\(statisticalMetrics.detectedAIKeywords.count) cliché(s) found")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(Color.palMuted)
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("ESTIMATED Z-SCORE")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(Color.palMuted)
+                                    Text("\(statisticalMetrics.estimatedZScore, specifier: "%.1f")")
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundStyle(statisticalMetrics.estimatedZScore > 2.0 ? .red : Color.palMint)
+                                    Text(statisticalMetrics.estimatedZScore > 2.0 ? "Watermarked" : "Below Threshold")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(Color.palMuted)
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                            }
+
+                            if !statisticalMetrics.detectedAIKeywords.isEmpty {
+                                HStack(spacing: 6) {
+                                    Text("Detected LLM Terms:")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color.palMuted)
+                                    ForEach(statisticalMetrics.detectedAIKeywords.prefix(4), id: \.self) { kw in
+                                        Text(kw)
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                            }
+
+                            Divider()
+
+                            // Controls and Humanize Button
+                            HStack(spacing: 14) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("HUMANIZATION LEVEL")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .tracking(1)
+                                        .foregroundStyle(Color.palMint)
+                                    Picker("", selection: $selectedHumanizationLevel) {
+                                        ForEach(HumanizationLevel.allCases) { lvl in
+                                            Label(lvl.shortTitle, systemImage: lvl.symbol).tag(lvl)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    applyStatisticalHumanization()
+                                } label: {
+                                    Label("Humanize & Neutralize Token Bias", systemImage: "sparkles")
+                                }
+                                .buttonStyle(PalButtonStyle(prominent: true))
+                            }
+
+                            Text(selectedHumanizationLevel.explanation)
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.palMuted)
                         }
                     }
                 }
@@ -431,7 +560,28 @@ struct ConfidentialSanitizerView: View {
                 sourceName: "Scratchpad",
                 options: aiCleaningOptions
             )
+            let stats = await aiWatermarkService.analyzeStatisticalWatermark(text: aiRawInputText)
             self.aiWatermarkReport = report
+            self.statisticalMetrics = stats
+        }
+    }
+
+    private func applyStatisticalHumanization() {
+        Task {
+            let result = await aiWatermarkService.neutralizeTokenBias(
+                text: aiRawInputText,
+                level: selectedHumanizationLevel
+            )
+            self.aiRawInputText = result.purifiedText
+            self.tokenPerturbations = result.perturbations
+            self.statisticalMetrics = result.metrics
+            let report = await aiWatermarkService.analyzeAndSanitize(
+                text: result.purifiedText,
+                sourceName: "Scratchpad",
+                options: aiCleaningOptions
+            )
+            self.aiWatermarkReport = report
+            statusMessage = "Neutralized token bias: perturbed \(result.perturbations.count) token(s) and restored natural burstiness."
         }
     }
 

@@ -3,6 +3,22 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.17.0] - 2026-08-25
+
+### Added
+- **Statistical Token Bias & AI Watermark Countermeasure Engine (`AIWatermarkSanitizerService` & `ConfidentialSanitizerView`)**:
+  - **$n$-Gram Hash Disruptor**: Breaks the pseudo-random context hash ($\text{Hash}(w_{t-1}, w_{t-2})$) used by Anthropic, OpenAI, and Kirchenbauer watermarking to steer synonym choices into a "green list", dropping detector $z$-scores below statistical detection thresholds.
+  - **Sentence Burstiness & Cadence Humanizer**: Modulates sentence rhythms and breaks up rigid compound structures (`"; however,"`, `", which subsequently leads to"`) to restore natural human-like entropy ($\sigma > 7.0$).
+  - **AI Signature & Cliché Sweeper**: Detects and neutralizes over 150+ statistically overrepresented LLM signature words (*"delve into"*, *"rich tapestry"*, *"standing as a testament to"*, *"beacon of"*, *"fosters"*, *"underscores"*, *"pivotal"*, *"crucial"*, *"navigate the complexities"*).
+  - **Live Statistical Watermark Gauge**: Real-time HUD displaying **Token Bias Risk** (`Low` / `Moderate` / `High`), **Sentence Burstiness Index** ($\sigma$), **AI Vocab Density %**, and **Estimated $z$-Score**.
+  - **Configurable Humanization Tiers**:
+    - ⚡ **Light Desync**: Perturbs 10–15% of connector words and transition verbs to break $n$-gram hash chains while preserving exact phrasing.
+    - 🎯 **Balanced Naturalizer**: Sweeps AI buzzwords, disrupts token hashes, and balances sentence cadence.
+    - 🛡️ **Deep Anti-Detector**: Full syntactic restructuring, clause re-ordering, and vocabulary diversification to defeat statistical detectors.
+  - **1-Click "Humanize & Neutralize Token Bias" Action**: Seamlessly transforms text in the scratchpad and provides instant feedback on perturbed tokens.
+
+---
+
 ## [0.16.0] - 2026-08-25
 
 ### Added

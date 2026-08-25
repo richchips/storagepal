@@ -728,6 +728,37 @@ final class StoragePalTests: XCTestCase {
         XCTAssertEqual(report.steganographyConfidencePercent, 0)
         XCTAssertEqual(report.purifiedText, normalHumanText, "Human text must remain 100% byte-for-byte identical.")
     }
+
+    func testStatisticalTokenBiasAndClicheNeutralization() async {
+        let service = AIWatermarkSanitizerService()
+
+        let aiText = "Furthermore, it is crucial to delve into the rich tapestry of renewable energy solutions; however, navigating the complexities remains pivotal for growth."
+        let initialMetrics = await service.analyzeStatisticalWatermark(text: aiText)
+
+        XCTAssertTrue(initialMetrics.detectedAIKeywords.contains("delve into") || initialMetrics.detectedAIKeywords.contains("crucial") || initialMetrics.detectedAIKeywords.contains("rich tapestry"))
+
+        let result = await service.neutralizeTokenBias(text: aiText, level: .balanced)
+
+        XCTAssertFalse(result.purifiedText.contains("delve into"), "AI buzzword 'delve into' must be replaced.")
+        XCTAssertFalse(result.purifiedText.contains("rich tapestry"), "AI cliché 'rich tapestry' must be neutralized.")
+        XCTAssertFalse(result.purifiedText.contains("crucial"), "'crucial' must be replaced by a natural synonym.")
+        XCTAssertTrue(result.perturbations.count >= 3, "Must produce token perturbations to break n-gram hash chains.")
+        XCTAssertTrue(result.metrics.aiVocabularyDensityPercent < initialMetrics.aiVocabularyDensityPercent)
+    }
+
+    func testSentenceBurstinessCalculation() async {
+        let service = AIWatermarkSanitizerService()
+
+        // Text with uniform sentence lengths (typical LLM output)
+        let uniformAIText = "The team evaluated the primary system performance metrics. The results demonstrated a clear increase in speed. All stakeholders agreed on the upcoming quarterly plan."
+        let uniformMetrics = await service.analyzeStatisticalWatermark(text: uniformAIText)
+        XCTAssertTrue(uniformMetrics.burstinessScore < 3.0, "Uniform sentence lengths should yield low burstiness variance.")
+
+        // Natural human text with high sentence length variance (burstiness)
+        let naturalText = "Yes. When the quarterly benchmark results finally came in after weeks of exhaustive testing across all three production clusters, we noticed something unexpected. Revenue soared."
+        let naturalMetrics = await service.analyzeStatisticalWatermark(text: naturalText)
+        XCTAssertTrue(naturalMetrics.burstinessScore > 6.0, "Natural text with short and long sentences should yield high burstiness variance.")
+    }
 }
 
 

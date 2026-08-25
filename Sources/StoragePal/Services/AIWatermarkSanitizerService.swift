@@ -9,7 +9,7 @@ actor AIWatermarkSanitizerService {
 
     init() {}
 
-    // MARK: - Core Analysis & Sanitization
+    // MARK: - Core Analysis & Sanitization (Zero-Width, Homoglyphs & Chatbot Wrappers)
 
     func analyzeAndSanitize(
         text: String,
@@ -82,6 +82,198 @@ actor AIWatermarkSanitizerService {
         )
     }
 
+    // MARK: - Statistical Watermark & Token Bias Analysis
+
+    func analyzeStatisticalWatermark(text: String) -> StatisticalWatermarkMetrics {
+        guard !text.isEmpty else {
+            return .empty
+        }
+
+        let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let wordCount = words.count
+        guard wordCount > 0 else { return .empty }
+
+        // Split sentences by terminal punctuation (. ! ?)
+        let sentenceDelimiters = CharacterSet(charactersIn: ".!?\n")
+        let rawSentences = text.components(separatedBy: sentenceDelimiters)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.split(separator: " ").count >= 3 }
+
+        let sentenceCount = max(1, rawSentences.count)
+        let sentenceLengths = rawSentences.map { Double($0.split(separator: " ").count) }
+
+        // Compute burstiness (Standard Deviation of sentence length)
+        let meanLength = sentenceLengths.reduce(0.0, +) / Double(sentenceCount)
+        let variance = sentenceLengths.map { pow($0 - meanLength, 2) }.reduce(0.0, +) / Double(sentenceCount)
+        let burstinessScore = sqrt(variance)
+
+        // Scan for statistical AI clichés and overrepresented green-list tokens
+        var foundAIKeywords: [String] = []
+        let lower = text.lowercased()
+        for (cliche, _) in aiClicheDictionary {
+            if lower.contains(cliche.lowercased()) {
+                foundAIKeywords.append(cliche)
+            }
+        }
+
+        let aiVocabPercent = (Double(foundAIKeywords.count) / Double(max(1, wordCount))) * 100.0
+
+        // Estimated z-score simulation based on Kirchenbauer et al. green-list frequency
+        // Natural human text: z < 1.0; Watermarked AI text: z > 2.0
+        let greenListSimulatedRate = 0.25 + (Double(foundAIKeywords.count) * 0.04) + (burstinessScore < 4.5 ? 0.15 : 0.0)
+        let totalTokens = Double(wordCount)
+        let expected = 0.25 * totalTokens
+        let stdDev = sqrt(totalTokens * 0.25 * 0.75)
+        let estimatedGreenTokens = greenListSimulatedRate * totalTokens
+        let zScore = max(0.0, (estimatedGreenTokens - expected) / max(1.0, stdDev))
+
+        let risk: WatermarkRiskLevel
+        if zScore > 2.2 || aiVocabPercent > 3.0 || (burstinessScore < 3.5 && wordCount > 40) {
+            risk = .high
+        } else if zScore > 1.2 || aiVocabPercent > 1.5 || (burstinessScore < 5.0 && wordCount > 25) {
+            risk = .moderate
+        } else {
+            risk = .low
+        }
+
+        return StatisticalWatermarkMetrics(
+            wordCount: wordCount,
+            sentenceCount: sentenceCount,
+            burstinessScore: (burstinessScore * 10).rounded() / 10,
+            aiVocabularyDensityPercent: (aiVocabPercent * 10).rounded() / 10,
+            estimatedZScore: (zScore * 10).rounded() / 10,
+            tokenBiasRisk: risk,
+            detectedAIKeywords: foundAIKeywords
+        )
+    }
+
+    // MARK: - Statistical Token Bias & Rhythm Neutralizer
+
+    func neutralizeTokenBias(
+        text: String,
+        level: HumanizationLevel
+    ) -> (purifiedText: String, perturbations: [TokenPerturbation], metrics: StatisticalWatermarkMetrics) {
+        guard !text.isEmpty else {
+            return (text, [], .empty)
+        }
+
+        var working = text
+        var perturbations: [TokenPerturbation] = []
+
+        // Pass 1: Replace statistical AI clichés and signature buzzwords
+        for (cliche, replacements) in aiClicheDictionary {
+            guard let replacement = replacements.first else { continue }
+
+            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: cliche) + "\\b"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(working.startIndex..<working.endIndex, in: working)
+                let matches = regex.matches(in: working, options: [], range: range)
+
+                for match in matches.reversed() {
+                    if let strRange = Range(match.range, in: working) {
+                        let original = String(working[strRange])
+                        // Match casing of original
+                        let formattedReplacement = original.first?.isUppercase == true
+                            ? replacement.prefix(1).uppercased() + replacement.dropFirst()
+                            : replacement
+
+                        working.replaceSubrange(strRange, with: formattedReplacement)
+                        perturbations.append(
+                            TokenPerturbation(
+                                originalWord: original,
+                                replacementWord: formattedReplacement,
+                                reason: "Neutralized statistical AI buzzword (\(cliche))",
+                                offset: match.range.location
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // Pass 2: $n$-Gram Hash Disruptor (Modulate transition connectors and conjunctions)
+        let transitionPerturbations: [(pattern: String, replacements: [String])] = [
+            (#"(?i)\bhowever,\b"#, ["Yet,", "Still,", "On the other hand,", "Even so,"]),
+            (#"(?i)\bfurthermore,\b"#, ["Also,", "In addition,", "What's more,", "Beyond that,"]),
+            (#"(?i)\bmoreover,\b"#, ["Also,", "Plus,", "In addition,", "Alongside this,"]),
+            (#"(?i)\btherefore,\b"#, ["So,", "As a result,", "Because of this,", "Thus,"]),
+            (#"(?i)\bconsequently,\b"#, ["As a result,", "Because of this,", "Hence,"]),
+            (#"(?i)\badditionally,\b"#, ["Also,", "What's more,", "On top of that,"]),
+            (#"(?i)\bspecifically,\b"#, ["In particular,", "Namely,", "More precisely,"]),
+            (#"(?i)\bfor instance,\b"#, ["For example,", "As an example,", "To illustrate,"]),
+            (#"(?i)\bultimately,\b"#, ["In the end,", "Finally,", "At the end of the day,"]),
+            (#"(?i)\bin particular,\b"#, ["Specifically,", "Especially,", "Mainly,"])
+        ]
+
+        var transitionIndex = 0
+        for item in transitionPerturbations {
+            if let regex = try? NSRegularExpression(pattern: item.pattern, options: []) {
+                let range = NSRange(working.startIndex..<working.endIndex, in: working)
+                let matches = regex.matches(in: working, options: [], range: range)
+
+                for match in matches.reversed() {
+                    if let strRange = Range(match.range, in: working) {
+                        let original = String(working[strRange])
+                        let replacement = item.replacements[transitionIndex % item.replacements.count]
+                        transitionIndex += 1
+
+                        working.replaceSubrange(strRange, with: replacement)
+                        perturbations.append(
+                            TokenPerturbation(
+                                originalWord: original,
+                                replacementWord: replacement,
+                                reason: "Desynchronized n-gram hash chain transition",
+                                offset: match.range.location
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Sentence Burstiness & Cadence Modulation (Balanced & Deep)
+        if level == .balanced || level == .deepNatural {
+            working = injectSentenceBurstiness(text: working, level: level, perturbations: &perturbations)
+        }
+
+        let newMetrics = analyzeStatisticalWatermark(text: working)
+        return (working, perturbations, newMetrics)
+    }
+
+    private func injectSentenceBurstiness(
+        text: String,
+        level: HumanizationLevel,
+        perturbations: inout [TokenPerturbation]
+    ) -> String {
+        var result = text
+
+        // Break rigid compound clauses joined with repeating semicolons or excessive conjunctions
+        let rigidPatterns = [
+            ("; however, ", ". Yet, "),
+            ("; furthermore, ", ". Also, "),
+            ("; moreover, ", ". What's more, "),
+            ("; therefore, ", ". So, "),
+            (", which subsequently leads to ", ". This leads to "),
+            (", which in turn highlights ", ". This highlights ")
+        ]
+
+        for (pattern, replacement) in rigidPatterns {
+            if result.contains(pattern) {
+                result = result.replacingOccurrences(of: pattern, with: replacement)
+                perturbations.append(
+                    TokenPerturbation(
+                        originalWord: pattern.trimmingCharacters(in: .whitespaces),
+                        replacementWord: replacement.trimmingCharacters(in: .whitespaces),
+                        reason: "Modulated sentence cadence & increased burstiness variance",
+                        offset: 0
+                    )
+                )
+            }
+        }
+
+        return result
+    }
+
     // MARK: - File Sanitization
 
     func sanitizeFile(
@@ -103,6 +295,48 @@ actor AIWatermarkSanitizerService {
             return (targetURL, report)
         }
     }
+
+    // MARK: - Curated AI Cliché & Token Bias Dictionary
+
+    private let aiClicheDictionary: [String: [String]] = [
+        "delve into": ["explore", "look into", "examine", "investigate"],
+        "delves into": ["explores", "looks into", "examines"],
+        "delving into": ["exploring", "looking into", "examining"],
+        "tapestry of": ["range of", "collection of", "variety of", "blend of"],
+        "rich tapestry": ["wide variety", "complex mix", "diverse range"],
+        "intricate tapestry": ["layered mix", "complex network"],
+        "testament to": ["proof of", "evidence of", "sign of"],
+        "standing as a testament to": ["proving", "demonstrating", "showing"],
+        "beacon of": ["symbol of", "example of", "guide for"],
+        "fosters": ["encourages", "promotes", "supports", "builds"],
+        "fostering": ["encouraging", "promoting", "supporting"],
+        "underscores": ["highlights", "shows", "stresses", "points out"],
+        "underscoring": ["highlighting", "showing", "pointing to"],
+        "crucial": ["key", "important", "essential", "vital"],
+        "pivotal": ["critical", "key", "central", "main"],
+        "paramount": ["vital", "top priority", "essential"],
+        "cornerstone": ["foundation", "basis", "core element"],
+        "multifaceted": ["complex", "varied", "layered", "diverse"],
+        "ever-evolving": ["changing", "developing", "shifting"],
+        "seamlessly integrates": ["works smoothly with", "connects directly with"],
+        "seamlessly": ["smoothly", "easily", "directly"],
+        "navigate the complexities": ["handle the challenges", "manage the details", "work through"],
+        "navigate": ["manage", "handle", "deal with", "work through"],
+        "harness the power of": ["use", "apply", "take advantage of"],
+        "harnessing": ["using", "applying", "leveraging"],
+        "shed light on": ["clarify", "explain", "highlight"],
+        "sheds light on": ["clarifies", "explains", "highlights"],
+        "embark on a journey": ["start out", "begin", "set out"],
+        "poised to": ["ready to", "set to", "prepared to"],
+        "it is important to note that": ["note that", "importantly,", ""],
+        "it is worth noting that": ["notably,", "keep in mind that", ""],
+        "it should be noted that": ["note that", "importantly,", ""],
+        "in conclusion": ["overall,", "to wrap up,", "in summary,"],
+        "at the forefront of": ["leading", "pioneering", "heading"],
+        "plays a vital role in": ["is important for", "helps with", "shapes"],
+        "a myriad of": ["many", "numerous", "a wide range of"],
+        "game-changer": ["major shift", "breakthrough", "significant step forward"]
+    ]
 
     // MARK: - Private Invisible Unicode Steganography Handler
 
@@ -202,35 +436,16 @@ actor AIWatermarkSanitizerService {
     // MARK: - Homoglyph / Lookalike Substitution Normalizer
 
     private func detectAndNormalizeHomoglyphs(from text: String) -> (String, Int, [AIWatermarkFinding]) {
-        // Cyrillic & Greek lookalikes swapped into Latin text
         let homoglyphMap: [Character: Character] = [
-            // Lowercase Cyrillic
-            "\u{0430}": "a", // Cyrillic 'а'
-            "\u{0435}": "e", // Cyrillic 'е'
-            "\u{043E}": "o", // Cyrillic 'о'
-            "\u{0440}": "p", // Cyrillic 'р'
-            "\u{0441}": "s", // Cyrillic 'с'
-            "\u{0443}": "y", // Cyrillic 'у'
-            "\u{0445}": "x", // Cyrillic 'х'
-            "\u{0456}": "i", // Cyrillic 'і'
-            "\u{0458}": "j", // Cyrillic 'ј'
-            // Uppercase Cyrillic
-            "\u{0410}": "A",
-            "\u{0412}": "B",
-            "\u{0415}": "E",
-            "\u{041A}": "K",
-            "\u{041C}": "M",
-            "\u{041D}": "H",
-            "\u{041E}": "O",
-            "\u{0420}": "P",
-            "\u{0421}": "C",
-            "\u{0422}": "T",
+            "\u{0430}": "a", "\u{0435}": "e", "\u{043E}": "o", "\u{0440}": "p", "\u{0441}": "s",
+            "\u{0443}": "y", "\u{0445}": "x", "\u{0456}": "i", "\u{0458}": "j",
+            "\u{0410}": "A", "\u{0412}": "B", "\u{0415}": "E", "\u{041A}": "K", "\u{041C}": "M",
+            "\u{041D}": "H", "\u{041E}": "O", "\u{0420}": "P", "\u{0421}": "C", "\u{0422}": "T",
             "\u{0425}": "X",
-            // Greek
-            "\u{0391}": "A", "\u{0392}": "B", "\u{0395}": "E", "\u{0396}": "Z",
-            "\u{0397}": "H", "\u{0399}": "I", "\u{039A}": "K", "\u{039C}": "M",
-            "\u{039D}": "N", "\u{039F}": "O", "\u{03A1}": "P", "\u{03A4}": "T",
-            "\u{03A5}": "Y", "\u{03A7}": "X", "\u{03BF}": "o", "\u{03BD}": "v", "\u{03C1}": "p"
+            "\u{0391}": "A", "\u{0392}": "B", "\u{0395}": "E", "\u{0396}": "Z", "\u{0397}": "H",
+            "\u{0399}": "I", "\u{039A}": "K", "\u{039C}": "M", "\u{039D}": "N", "\u{039F}": "O",
+            "\u{03A1}": "P", "\u{03A4}": "T", "\u{03A5}": "Y", "\u{03A7}": "X", "\u{03BF}": "o",
+            "\u{03BD}": "v", "\u{03C1}": "p"
         ]
 
         var count = 0
@@ -270,7 +485,6 @@ actor AIWatermarkSanitizerService {
         var count = 0
         var findings: [AIWatermarkFinding] = []
 
-        // Preamble regexes (e.g. "As an AI language model...", "Here is the summary you requested:")
         let preamblePatterns = [
             #"(?i)^\s*(?:as an ai language model,?\s*|as an ai assistant,?\s*|as an ai,?\s*)"#,
             #"(?i)^\s*(?:certainly!|sure!|absolutely!)\s+(?:here is|here's|below is)\s+[^:\n]+:\s*\n*"#,
@@ -300,7 +514,6 @@ actor AIWatermarkSanitizerService {
             }
         }
 
-        // Postamble / disclaimer regexes (e.g. "I hope this helps! Let me know if you need anything else.")
         let postamblePatterns = [
             #"(?i)\n+\s*(?:i hope this helps!?\s*(?:let me know if you (?:have any questions|need (?:anything|further) (?:else|assistance))\b\.?)?)\s*$"#,
             #"(?i)\n+\s*(?:let me know if you have (?:any )?(?:further )?questions\.?|feel free to ask if you (?:have|need) (?:more|any) questions\.?)\s*$"#,
@@ -336,14 +549,10 @@ actor AIWatermarkSanitizerService {
     // MARK: - Whitespace and Canonical Cleanup
 
     private func normalizeWhitespaceAndNFKC(_ text: String) -> String {
-        // Apply Unicode NFKC canonical decomposition & recomposition
         var normalized = text.precomposedStringWithCanonicalMapping
-
-        // Replace consecutive non-breaking spaces with standard space
         normalized = normalized.replacingOccurrences(of: "\u{00A0}", with: " ")
         normalized = normalized.replacingOccurrences(of: "\u{2007}", with: " ")
         normalized = normalized.replacingOccurrences(of: "\u{202F}", with: " ")
-
         return normalized
     }
 
@@ -367,7 +576,6 @@ actor AIWatermarkSanitizerService {
 
         let report = analyzeAndSanitize(text: aggregatedText, sourceName: sourceURL.lastPathComponent, options: options)
 
-        // Strip AI-identifying metadata attributes from PDF
         var cleanAttributes = document.documentAttributes ?? [:]
         cleanAttributes[PDFDocumentAttribute.creatorAttribute] = "Storage Pal"
         cleanAttributes[PDFDocumentAttribute.producerAttribute] = "Storage Pal Sanitizer"
@@ -381,12 +589,10 @@ actor AIWatermarkSanitizerService {
 
         document.documentAttributes = cleanAttributes
 
-        // Remove hidden annotations or invisible watermarks on each page
         for i in 0..<document.pageCount {
             guard let page = document.page(at: i) else { continue }
             let annotations = page.annotations
             for annotation in annotations {
-                // If annotation has invisible flags or suspicious hidden watermark metadata
                 if annotation.type == "Watermark" || annotation.contents?.contains("AI") == true || annotation.contents?.contains("Generated") == true {
                     page.removeAnnotation(annotation)
                 }
