@@ -67,6 +67,7 @@ Storage Pal/
         │   ├── StorageSentinelService.swift # Storage velocity forecaster & runaway log/cache explosion watcher
         │   ├── DriveConsolidatorService.swift # Multi-volume cross-drive duplicate file detector and backup merger
         │   ├── LocalArchivalHubService.swift # Cloud subscription savings estimator, NAS SMB connection helper, and local migration
+        │   ├── QuickCleanService.swift # Actor service orchestrating fast parallel low-risk clutter scans and safe batch trashing
         │   ├── StorageScanner.swift # Swift actor for async filesystem enumeration
         │   ├── DeveloperScanner.swift # Scans Xcode, node_modules, .venv, Cargo, and creative caches
         │   ├── StorageIntelligenceEngine.swift # On-device machine learning preference scoring & reinforcement model
@@ -81,6 +82,7 @@ Storage Pal/
             ├── Components.swift # Design system (PalCard, StorageBar, PalButtonStyle, SectionHeading)
             ├── DashboardView.swift # Main window & sidebar layout (Today, Tidy, Duplicates, Apps, Startup, Photos, Vault, Sanitize, Consolidate, Own Your Data, Treemap, Drives, iCloud, Automate)
             ├── DetailViews.swift # Detail screens (TidyListView, DrivesView, ICloudView, FileReviewView, SettingsView)
+            ├── QuickCleanSheet.swift # Fast 1-click low-risk storage cleaner modal with itemized breakdown and confirmation
             ├── DuplicateFinderView.swift # Universal duplicate file inspector, copy report helper, and batch cleaner
             ├── AutomationView.swift # Scheduled maintenance rules, low-disk capacity triggers, dry run preview, and audit history
             ├── AppUninstallerView.swift # Installed app search, orphaned leftovers inspector, and complete 1-click uninstaller sheet
@@ -121,6 +123,7 @@ Storage Pal/
 | [`StorageSentinelService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/StorageSentinelService.swift) | Storage velocity forecaster predicting days until SSD saturation and detecting runaway log/cache size spikes. | `StorageSentinelService` |
 | [`DriveConsolidatorService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/DriveConsolidatorService.swift) | Multi-volume streaming SHA-256 duplicate scanner and automated drive merge planner. | `DriveConsolidatorService` |
 | [`LocalArchivalHubService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/LocalArchivalHubService.swift) | Cloud storage footprint and recurring subscription savings estimator ($/yr) + local SMB/NFS NAS connection assistant. | `LocalArchivalHubService` |
+| [`QuickCleanService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/QuickCleanService.swift) | Actor service orchestrating fast parallel low-risk clutter scans (caches, logs, derived data, orphan residue) and safe batch cleanup. | `QuickCleanService` |
 | [`StorageScanner.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/StorageScanner.swift) | Background Swift `actor` executing async directory traversals, capacity calculations, and recommendation construction. | `StorageScanner` |
 | [`DeveloperScanner.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/DeveloperScanner.swift) | Background scanner for Xcode `DerivedData`/`Archives`, untouched `node_modules`, Cargo `target/`, `.venv`, and orphaned DMG/PKG installers. | `DeveloperScanner` |
 | [`StorageIntelligenceEngine.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/StorageIntelligenceEngine.swift) | Privacy-first on-device weighted machine learning model computing confidence scores and tuning weights based on user cleanup actions. | `StorageIntelligenceEngine`, `StoragePreferenceModel` |
@@ -131,6 +134,7 @@ Storage Pal/
 | [`PhotoDeduplicatorService.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/PhotoDeduplicatorService.swift) | Perceptual visual hash duplicate finder utilizing Apple's `Vision` framework (`VNGenerateImageFeaturePrintRequest`). | `PhotoDeduplicatorService`, `PhotoDuplicateGroup` |
 | [`TreemapLayout.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Services/TreemapLayout.swift) | Proportional spatial layout builder for rendering squarified treemaps of nested folder trees. | `TreemapNode`, `TreemapBuilder` |
 | [`DashboardView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/DashboardView.swift) | Main window layout with multi-tab sidebar (Today, Tidy, Duplicates, Apps, Startup, Photos, Vault, Sanitize, Consolidate, Own Your Data, Treemap, Drives, iCloud, Automate). | `DashboardView`, `TodayView` |
+| [`QuickCleanSheet.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/QuickCleanSheet.swift) | Fast 1-click low-risk storage cleaner modal with itemized breakdown, zero-risk guarantee, and safe confirmation. | `QuickCleanSheet` |
 | [`PalVaultView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/PalVaultView.swift) | Hardware-backed biometric Touch ID storage vault and AES-GCM encrypted file browser. | `PalVaultView` |
 | [`ConfidentialSanitizerView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/ConfidentialSanitizerView.swift) | Drag-and-drop EXIF/GPS/PDF metadata inspector, clean exporter, and permanent 3-pass file shredder. | `ConfidentialSanitizerView` |
 | [`DriveConsolidatorView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/DriveConsolidatorView.swift) | Cross-volume multi-drive duplicate comparator and automated backup merge planner. | `DriveConsolidatorView` |

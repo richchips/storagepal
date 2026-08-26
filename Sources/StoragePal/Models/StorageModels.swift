@@ -1086,6 +1086,154 @@ struct ICloudUntangleReport: Sendable {
     }
 }
 
+// MARK: - Quick Clean / Free Up Space Models
+
+public enum QuickCleanCategoryKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case browserCaches = "Browser Web Caches"
+    case systemLogs = "Stale Logs & Crash Dumps"
+    case developerCaches = "Xcode & Simulator Caches"
+    case orphanedResidue = "Orphaned App Leftovers"
+    case orphanedInstallers = "Old DMG / PKG Installers"
+    case staleProjectArtifacts = "Untouched Build Folders"
+    case userTrash = "macOS Trash"
+
+    public var id: String { rawValue }
+
+    public var symbol: String {
+        switch self {
+        case .browserCaches: "globe"
+        case .systemLogs: "doc.text.magnifyingglass"
+        case .developerCaches: "hammer.fill"
+        case .orphanedResidue: "trash.circle"
+        case .orphanedInstallers: "shippingbox"
+        case .staleProjectArtifacts: "folder.badge.gearshape"
+        case .userTrash: "trash"
+        }
+    }
+
+    public var safetyDescription: String {
+        switch self {
+        case .browserCaches:
+            "Zero-risk: HTTP caches and temporary media buffers only. Saved passwords, logins, cookies, and history are never touched."
+        case .systemLogs:
+            "Safe: Stale diagnostic reports, crash dumps, and spin logs older than 14 days."
+        case .developerCaches:
+            "Safe: Intermediate Xcode DerivedData and Simulator build caches. Source code and projects are untouched."
+        case .orphanedResidue:
+            "Safe: Leftover support files and cache ghosts from apps that have already been deleted."
+        case .orphanedInstallers:
+            "Safe: Downloaded DMG and PKG installers for applications already installed on your Mac."
+        case .staleProjectArtifacts:
+            "Safe: Untouched node_modules and target build directories in projects dormant for >30 days."
+        case .userTrash:
+            "Safe: Files previously moved to the Trash bin awaiting deletion."
+        }
+    }
+
+    public var tint: Color {
+        switch self {
+        case .browserCaches: Color.palMint
+        case .systemLogs: .blue
+        case .developerCaches: .purple
+        case .orphanedResidue: .orange
+        case .orphanedInstallers: .indigo
+        case .staleProjectArtifacts: .teal
+        case .userTrash: .red
+        }
+    }
+}
+
+public struct QuickCleanItem: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let url: URL
+    public let bytes: Int64
+    public let category: QuickCleanCategoryKind
+    public let detail: String
+    public let isSafeByDefault: Bool
+
+    public init(
+        id: String,
+        name: String,
+        url: URL,
+        bytes: Int64,
+        category: QuickCleanCategoryKind,
+        detail: String,
+        isSafeByDefault: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        self.url = url
+        self.bytes = bytes
+        self.category = category
+        self.detail = detail
+        self.isSafeByDefault = isSafeByDefault
+    }
+}
+
+public struct QuickCleanCategoryGroup: Identifiable, Sendable {
+    public var id: String { kind.rawValue }
+    public let kind: QuickCleanCategoryKind
+    public var items: [QuickCleanItem]
+
+    public var totalBytes: Int64 {
+        items.reduce(0) { $0 + $1.bytes }
+    }
+
+    public init(kind: QuickCleanCategoryKind, items: [QuickCleanItem]) {
+        self.kind = kind
+        self.items = items
+    }
+}
+
+public struct QuickCleanScanResult: Sendable {
+    public let createdAt: Date
+    public let items: [QuickCleanItem]
+
+    public var totalReclaimableBytes: Int64 {
+        items.reduce(0) { $0 + $1.bytes }
+    }
+
+    public var groups: [QuickCleanCategoryGroup] {
+        let grouped = Dictionary(grouping: items, by: { $0.category })
+        return QuickCleanCategoryKind.allCases.compactMap { kind in
+            if let items = grouped[kind], !items.isEmpty {
+                return QuickCleanCategoryGroup(kind: kind, items: items.sorted { $0.bytes > $1.bytes })
+            }
+            return nil
+        }
+    }
+
+    public init(createdAt: Date = Date(), items: [QuickCleanItem]) {
+        self.createdAt = createdAt
+        self.items = items
+    }
+
+    public static var empty: QuickCleanScanResult {
+        QuickCleanScanResult(createdAt: Date(), items: [])
+    }
+}
+
+public struct QuickCleanSummary: Sendable {
+    public let reclaimedBytes: Int64
+    public let cleanedItemsCount: Int
+    public let categoryBreakdown: [QuickCleanCategoryKind: Int64]
+    public let failedCount: Int
+
+    public init(
+        reclaimedBytes: Int64,
+        cleanedItemsCount: Int,
+        categoryBreakdown: [QuickCleanCategoryKind: Int64],
+        failedCount: Int
+    ) {
+        self.reclaimedBytes = reclaimedBytes
+        self.cleanedItemsCount = cleanedItemsCount
+        self.categoryBreakdown = categoryBreakdown
+        self.failedCount = failedCount
+    }
+}
+
+
 
 
 

@@ -175,6 +175,10 @@ struct DashboardView: View {
             BrowserCleanerView()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $model.isQuickCleanSheetPresented) {
+            QuickCleanSheet()
+                .environmentObject(model)
+        }
         .sheet(isPresented: $updateService.isPresented) {
             AppUpdateSheet()
         }
@@ -279,18 +283,28 @@ private struct TodayView: View {
                         detail: "One clear view of what needs attention — and what doesn’t."
                     )
                     Spacer()
-                    Button {
-                        model.runScan()
-                    } label: {
-                        Label("Check again", systemImage: "arrow.clockwise")
+                    HStack(spacing: 10) {
+                        Button {
+                            model.startQuickCleanFlow()
+                        } label: {
+                            Label("Quick Free Up", systemImage: "sparkles")
+                        }
+                        .buttonStyle(PalButtonStyle(prominent: true))
+
+                        Button {
+                            model.runScan()
+                        } label: {
+                            Label("Check again", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(PalButtonStyle())
+                        .disabled(model.isScanning)
                     }
-                    .buttonStyle(PalButtonStyle())
-                    .disabled(model.isScanning)
                 }
 
                 if let report = model.report, let disk = report.internalDisk {
                     permissionBannerIfNeeded(report)
                     healthCard(report: report, disk: disk)
+                    quickCleanCard
                     forecastCard
                     nextSteps(report)
                 } else {
@@ -299,6 +313,49 @@ private struct TodayView: View {
             }
             .padding(34)
             .frame(maxWidth: 900, alignment: .leading)
+        }
+    }
+
+    private var quickCleanCard: some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 18) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.palMint.opacity(0.14))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(Color.palMint)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Quick Free Up Space")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                        Text("Low Risk")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.palMint)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.palMint.opacity(0.12), in: Capsule())
+                    }
+                    Text("Clear disposable browser caches, stale crash logs, build artifacts, and app leftovers without decision fatigue.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+
+                Button {
+                    model.startQuickCleanFlow()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill")
+                        Text("Review & Free Up…")
+                    }
+                }
+                .buttonStyle(PalButtonStyle(prominent: true))
+            }
         }
     }
 
@@ -394,8 +451,12 @@ private struct TodayView: View {
                     if model.isScanning {
                         ProgressView().tint(Color.palMint).frame(width: 220)
                     } else {
-                        Button("Check my Mac") { model.runScan() }
-                            .buttonStyle(PalButtonStyle(prominent: true))
+                        HStack(spacing: 12) {
+                            Button("Quick Free Up Space") { model.startQuickCleanFlow() }
+                                .buttonStyle(PalButtonStyle(prominent: true))
+                            Button("Check my Mac") { model.runScan() }
+                                .buttonStyle(PalButtonStyle())
+                        }
                     }
                 }
                 Spacer()

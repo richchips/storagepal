@@ -23,12 +23,16 @@ final class AppModel: ObservableObject {
     @Published var isICloudScanning = false
     @Published var permissionRecoveryContext: PermissionRecoveryContext?
     @Published var isBrowserCleanerViewPresented = false
+    @Published var isQuickCleanSheetPresented = false
+    @Published var quickCleanScanResult: QuickCleanScanResult?
+    @Published var isQuickCleanScanning = false
 
     private let scanner = StorageScanner()
     private let uninstaller = AppUninstallerService()
     private let orphanedService = OrphanedResidueService()
     private let browserCleaner = BrowserCleanerService()
     private let logCleaner = SystemLogCleanerService()
+    private let quickCleanService = QuickCleanService.shared
     private let photoQuality = PhotoQualityService()
     private let iCloudService = ICloudEvictionService()
     private let iCloudManager = ICloudManagerService.shared
@@ -1161,5 +1165,52 @@ final class AppModel: ObservableObject {
         maintenanceLogs.insert(entry, at: 0)
         saveMaintenanceLogs()
     }
+
+    // MARK: - Quick Clean Orchestration
+
+    func startQuickCleanFlow() {
+        isQuickCleanSheetPresented = true
+        if quickCleanScanResult == nil && !isQuickCleanScanning {
+            Task {
+                await runQuickScan()
+            }
+        }
+    }
+
+    func runQuickScan() async {
+        isQuickCleanScanning = true
+        let result = await quickCleanService.scanQuickCleanTargets()
+        self.quickCleanScanResult = result
+        self.isQuickCleanScanning = false
+    }
+
+    func executeQuickClean(selectedItems: [QuickCleanItem]) async -> QuickCleanSummary {
+        let summary = await quickCleanService.executeQuickClean(items: selectedItems)
+
+        let selectedIDs = Set(selectedItems.map { $0.id })
+        if let currentResult = quickCleanScanResult {
+            let remainingItems = currentResult.items.filter { !selectedIDs.contains($0.id) }
+            self.quickCleanScanResult = QuickCleanScanResult(createdAt: Date(), items: remainingItems)
+        }
+
+        let entry = MaintenanceLogEntry(
+            id: UUID().uuidString,
+            timestamp: Date(),
+            ruleName: "Quick Free Up Space",
+            actionDescription: "Cleaned \(summary.cleanedItemsCount) items (\(ByteText.string(summary.reclaimedBytes)) reclaimed)",
+            filesProcessedCount: summary.cleanedItemsCount,
+            reclaimedBytes: summary.reclaimedBytes,
+            wasTriggeredByLowSpace: false,
+            errorDetails: summary.failedCount > 0 ? "\(summary.failedCount) item(s) skipped or required elevated permissions" : nil
+        )
+        maintenanceLogs.insert(entry, at: 0)
+        saveMaintenanceLogs()
+
+        // Trigger background refresh so dashboard storage charts and recommendations update
+        runScan()
+
+        return summary
+    }
 }
+
 

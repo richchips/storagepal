@@ -28,14 +28,14 @@ else
     swift build "${BUILD_ARGS[@]}"
 fi
 
-cp -p "$BUILD_DIR/release/StoragePal" "$MACOS_DIR/StoragePal"
-cp -p "$PROJECT_DIR/AppResources/Info.plist" "$CONTENTS_DIR/Info.plist"
+rm -rf "$APP_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+
+cp -X "$BUILD_DIR/release/StoragePal" "$MACOS_DIR/StoragePal"
+cp -X "$PROJECT_DIR/AppResources/Info.plist" "$CONTENTS_DIR/Info.plist"
 chmod +x "$MACOS_DIR/StoragePal"
 
-rm -rf "$CONTENTS_DIR/_CodeSignature"
 xattr -cr "$APP_DIR" 2>/dev/null || true
-chflags -R nohidden "$APP_DIR" 2>/dev/null || true
-
 codesign --force --sign - "$APP_DIR"
 codesign -v "$APP_DIR"
 

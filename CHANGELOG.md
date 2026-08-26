@@ -3,6 +3,28 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+## [0.20.0] - 2026-08-26
+
+### Added
+- **Quick Scan & Free Up Space on Home / Hub Screen (`QuickCleanService`, `QuickCleanSheet`, & `DashboardView`)**:
+  - **1-Click Low-Risk Clutter Cleaner**: Added directly to the Home / Hub ("Good morning") screen to allow users to quickly free up space without decision fatigue or multi-step configuration.
+  - **Multi-Target Parallel Scanner (`QuickCleanService`)**:
+    - High-speed async scanning across disposable browser web & media caches (Safari, Chrome, Brave, Firefox, Edge, Opera).
+    - Stale crash reports, spin dumps, and diagnostic logs older than 14 days.
+    - Xcode `DerivedData` and CoreSimulator temporary build caches.
+    - Orphaned `Application Support` and cache ghost folders for uninstalled software.
+    - Downloaded DMG and PKG installers for applications already installed.
+    - macOS Trash bin quick review.
+  - **Transparent Review & Confirmation Modal (`QuickCleanSheet`)**:
+    - Large space recovery summary gauge displaying total reclaimable gigabytes.
+    - **Zero-Risk Guarantee** callout confirming personal documents, photos, logins, passwords, and source repos are never touched.
+    - Grouped category breakdown with item counts, safety descriptions, size badges, and expandable disclosures to inspect individual files and paths.
+    - Single-click **"Clean & Free Up Space"** action safely moving files to Trash, recording entries to the maintenance audit log, and instantly updating dashboard storage meters.
+    - Animated progress indicator and celebratory success screen summarizing freed space.
+  - **Today View Integration**: Prominent "Quick Free Up" header button, dedicated Today action card, and initial welcome screen quick-action button.
+
+---
+
 ## [0.19.0] - 2026-08-25
 
 ### Added

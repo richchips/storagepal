@@ -830,7 +830,62 @@ final class StoragePalTests: XCTestCase {
         // Verify log was recorded
         XCTAssertTrue(model.maintenanceLogs.contains { $0.ruleName == "Archive to Mock Drive" })
     }
+
+    func testQuickCleanCategoryMetadata() {
+        for kind in QuickCleanCategoryKind.allCases {
+            XCTAssertFalse(kind.rawValue.isEmpty)
+            XCTAssertFalse(kind.symbol.isEmpty)
+            XCTAssertFalse(kind.safetyDescription.isEmpty)
+        }
+    }
+
+    func testQuickCleanScanResultGrouping() {
+        let item1 = QuickCleanItem(
+            id: "1",
+            name: "Safari Cache",
+            url: URL(fileURLWithPath: "/tmp/safari"),
+            bytes: 50_000_000,
+            category: .browserCaches,
+            detail: "500 files",
+            isSafeByDefault: true
+        )
+        let item2 = QuickCleanItem(
+            id: "2",
+            name: "Chrome Cache",
+            url: URL(fileURLWithPath: "/tmp/chrome"),
+            bytes: 150_000_000,
+            category: .browserCaches,
+            detail: "1200 files",
+            isSafeByDefault: true
+        )
+        let item3 = QuickCleanItem(
+            id: "3",
+            name: "CrashReporter Dumps",
+            url: URL(fileURLWithPath: "/tmp/crash"),
+            bytes: 30_000_000,
+            category: .systemLogs,
+            detail: "12 logs",
+            isSafeByDefault: true
+        )
+
+        let result = QuickCleanScanResult(createdAt: Date(), items: [item1, item2, item3])
+        XCTAssertEqual(result.totalReclaimableBytes, 230_000_000)
+
+        let groups = result.groups
+        XCTAssertEqual(groups.count, 2)
+
+        let browserGroup = groups.first { $0.kind == .browserCaches }
+        XCTAssertNotNil(browserGroup)
+        XCTAssertEqual(browserGroup?.totalBytes, 200_000_000)
+        XCTAssertEqual(browserGroup?.items.count, 2)
+        XCTAssertEqual(browserGroup?.items.first?.name, "Chrome Cache") // sorted by bytes desc
+
+        let logGroup = groups.first { $0.kind == .systemLogs }
+        XCTAssertNotNil(logGroup)
+        XCTAssertEqual(logGroup?.totalBytes, 30_000_000)
+    }
 }
+
 
 
 
