@@ -7,12 +7,87 @@ import PDFKit
 actor DocumentRedactionEngine {
     private let fm = FileManager.default
 
-    // Stop words to prevent common medical/clinical terms from triggering false-positive IDs
+    // Comprehensive clinical, MSE, psychometric, document structural, medication, and duration stop words
     private let stopWords: Set<String> = [
+        // Document metadata & structure
         "record", "records", "assessment", "assessments", "clinical", "note", "notes",
-        "history", "training", "material", "summary", "report", "intake", "discharge",
-        "appointment", "session", "review", "evaluation", "formulation", "client", "patient"
+        "history", "training", "material", "materials", "summary", "summaries", "intake", "discharge",
+        "appointment", "session", "sessions", "review", "reviews", "evaluation", "evaluations",
+        "formulation", "formulations", "client", "clients", "patient", "patients", "dummy", "sample",
+        "example", "template", "form", "forms", "appendix", "section", "sections", "page", "pages",
+        "title", "heading", "header", "footer", "confidential", "draft", "final", "initial",
+        "follow-up", "followup", "case", "overview", "background", "context", "plan", "plans",
+        "doctor", "doctors", "dr", "therapist", "therapists", "counselor", "counselors", "assessor",
+        "assessors", "clinician", "clinicians", "practitioner", "practitioners", "nurse", "nurses",
+        "psychologist", "psychologists", "psychiatrist", "psychiatrists", "gp", "general practitioner",
+        "hospital", "clinic", "ward", "department", "service", "unit",
+
+        // Mental State Examination (MSE) & clinical findings
+        "speech", "mood", "affect", "appearance", "behaviour", "behavior", "motor", "activity",
+        "eye", "contact", "rapport", "thought", "thoughts", "content", "process", "flow", "form",
+        "perception", "perceptions", "hallucinations", "delusions", "cognition", "orientation",
+        "memory", "concentration", "attention", "insight", "judgement", "judgment", "risk",
+        "suicide", "suicidal", "self-harm", "harm", "homicidal", "safety", "protective",
+        "factors", "state", "examination", "rate", "tone", "volume", "latency", "spontaneous",
+        "fluent", "coherent", "incoherent", "euthymic", "depressed", "anxious", "elevated",
+        "irritable", "labile", "blunted", "flat", "restricted", "reactive", "congruent",
+        "incongruent", "appropriate", "inappropriate", "linear", "logical", "tangential",
+        "circumstantial", "perseveration", "derailment", "intact", "impaired", "grossly",
+        "moderately", "mildly", "severely", "normal", "abnormal", "adequate", "good", "fair",
+        "poor", "preserved", "anxiety", "depression", "trauma", "ptsd", "ocd", "phobia",
+        "panic", "stress", "burnout", "psychosis", "insomnia", "fatigue", "lethargy",
+
+        // Psychometrics & scores
+        "phq", "phq-9", "gad", "gad-7", "audit", "audit-c", "dass", "dass-21", "bdi", "bai",
+        "core-10", "core-om", "wais", "wisc", "mmse", "moca", "score", "scores", "scale",
+        "scales", "cutoff", "severity", "minimal", "mild", "moderate", "severe",
+
+        // Medications, doses & clinical terms
+        "sertraline", "citalopram", "escitalopram", "fluoxetine", "paroxetine", "venlafaxine",
+        "duloxetine", "mirtazapine", "bupropion", "quetiapine", "olanzapine", "risperidone",
+        "aripiprazole", "haloperidol", "lithium", "diazepam", "lorazepam", "zopiclone",
+        "mg", "mcg", "dose", "dosage", "daily", "weekly", "tablets", "capsules", "prescribed",
+        "prescription", "medication", "medications",
+
+        // Durations, travel, temporal & relational words
+        "minute", "minutes", "min", "mins", "hour", "hours", "hr", "hrs", "day", "days",
+        "week", "weeks", "month", "months", "year", "years", "away", "drive", "walking",
+        "walk", "bus", "train", "commute", "distance", "travel", "approx", "approximately",
+        "around", "nearly", "about", "roughly", "ago", "earlier", "later", "working", "work",
+        "partner", "husband", "wife", "spouse", "child", "children", "mother", "father",
+        "brother", "sister", "sibling", "siblings", "parent", "parents", "manager", "occupation",
+        "promotion", "death", "eap", "counselling", "therapy", "support"
     ]
+
+    private func isDisallowedNameCandidate(_ candidate: String) -> Bool {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count < 2 || trimmed.count > 50 { return true }
+        let lower = trimmed.lowercased()
+        if stopWords.contains(lower) { return true }
+
+        // Split into individual alphanumeric words
+        let words = lower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        if words.isEmpty { return true }
+
+        // If ANY word is in the clinical/document stopWords, reject it
+        for w in words {
+            if stopWords.contains(w) {
+                return true
+            }
+        }
+
+        // Structural label words (e.g. Stage I, Section B, Table A, Type B, Figure C)
+        let structuralPrefixes: Set<String> = [
+            "stage", "type", "section", "appendix", "table", "figure", "grade",
+            "step", "part", "level", "class", "phase", "group", "room", "bed",
+            "ward", "item", "scale", "test", "score", "case", "form", "rate"
+        ]
+        if let firstWord = words.first, structuralPrefixes.contains(firstWord) {
+            return true
+        }
+
+        return false
+    }
 
     init() {}
 
@@ -110,10 +185,11 @@ actor DocumentRedactionEngine {
             // Tier 1: Contact details & addresses
             matches.append(contentsOf: findContactDetails(in: text, pageIndex: pageIndex, getOrMakeToken: getOrMakeToken))
 
-            // Tier 2: Quasi-Identifiers (Dates & Ages)
+            // Tier 2: Quasi-Identifiers (Dates, Ages, Locations in Strict/External mode)
             let isStrict = (policy == .externalResearch)
             matches.append(contentsOf: findQuasiDates(in: text, pageIndex: pageIndex, isStrict: isStrict, tokenProvider: { getOrMakeToken(for: $0, prefix: "DATE") }))
             matches.append(contentsOf: findQuasiAges(in: text, pageIndex: pageIndex, isStrict: isStrict, tokenProvider: { getOrMakeToken(for: $0, prefix: "AGE") }))
+            matches.append(contentsOf: findLocations(in: text, pageIndex: pageIndex, isStrict: isStrict, tokenProvider: { getOrMakeToken(for: $0, prefix: "LOCATION") }))
 
         case .financial:
             // SSN & UK NI
@@ -146,9 +222,9 @@ actor DocumentRedactionEngine {
             }
         }
 
-        // Filter out already tokenized placeholders (Idempotency)
+        // Filter out already tokenized placeholders (Idempotency) and disallowed stop words
         let filteredMatches = matches.filter { match in
-            !existingTokens.contains(match.originalText) && !stopWords.contains(match.originalText.lowercased())
+            !existingTokens.contains(match.originalText) && !isDisallowedNameCandidate(match.originalText)
         }
 
         // Deduplicate overlapping matches by range/text
@@ -170,14 +246,15 @@ actor DocumentRedactionEngine {
     private func findClientAndPatientNames(in text: String, pageIndex: Int, tokenProvider: (String) -> String) -> [SensitiveEntityMatch] {
         var results: [SensitiveEntityMatch] = []
 
-        // 1. "Client: Sam R." or "Client Sam R." or "Patient: John Doe"
-        let headerPattern = #"\b(?:Client|Patient|Assessor|Therapist|Counselor|Doctor)\s*[:\-]?\s+([A-Z][a-z]+(?:\s+[A-Z]\.?|\s+[A-Z][a-z]+))\b"#
+        // 1. "Client: Sam R." or "Patient: John Doe" or "Client - Sam R." or "Assessor: Dr. Jane Doe"
+        // Require explicit delimiter (:, -, –, —, |) to prevent "Dummy Client Assessment Notes" matching "Assessment Notes"
+        let headerPattern = #"\b(?:Client|Patient|Assessor|Therapist|Counselor|Doctor|Clinician|Practitioner)\s*[:\-–—|]\s*([A-Z][a-z]+(?:\s+[A-Z]\.?|\s+[A-Z][a-z]+)*)\b"#
         if let regex = try? NSRegularExpression(pattern: headerPattern) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 if match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) {
                     let nameStr = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !stopWords.contains(nameStr.lowercased()) else { continue }
+                    guard !isDisallowedNameCandidate(nameStr) else { continue }
                     results.append(
                         SensitiveEntityMatch(
                             category: "Client / Patient Name",
@@ -192,24 +269,27 @@ actor DocumentRedactionEngine {
             }
         }
 
-        // 2. Initials/Short names: e.g. "Sam R."
-        let initialPattern = #"\b([A-Z][a-z]{1,20}\s+[A-Z]\.)\b"#
-        if let regex = try? NSRegularExpression(pattern: initialPattern) {
-            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-            for match in regex.matches(in: text, options: [], range: nsRange) {
-                guard let range = Range(match.range, in: text) else { continue }
-                let nameStr = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !stopWords.contains(nameStr.lowercased()) else { continue }
-                results.append(
-                    SensitiveEntityMatch(
-                        category: "Person Name",
-                        originalText: nameStr,
-                        tokenReplacement: tokenProvider(nameStr),
-                        pageIndex: pageIndex,
-                        isEnabled: true,
-                        tier: .directIdentifier
+        // 2. Initials/Short names: e.g. "Sam R." or "Jane D." or "J. Smith"
+        let initialPattern1 = #"\b([A-Z][a-z]{1,20}\s+[A-Z]\.)\b"#
+        let initialPattern2 = #"\b([A-Z]\.\s+[A-Z][a-z]{1,20})\b"#
+        for initialPattern in [initialPattern1, initialPattern2] {
+            if let regex = try? NSRegularExpression(pattern: initialPattern) {
+                let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+                for match in regex.matches(in: text, options: [], range: nsRange) {
+                    guard let range = Range(match.range, in: text) else { continue }
+                    let nameStr = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !isDisallowedNameCandidate(nameStr) else { continue }
+                    results.append(
+                        SensitiveEntityMatch(
+                            category: "Person Name",
+                            originalText: nameStr,
+                            tokenReplacement: tokenProvider(nameStr),
+                            pageIndex: pageIndex,
+                            isEnabled: true,
+                            tier: .directIdentifier
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -218,13 +298,17 @@ actor DocumentRedactionEngine {
 
     private func findHonorificNames(in text: String, pageIndex: Int, tokenProvider: (String) -> String) -> [SensitiveEntityMatch] {
         var results: [SensitiveEntityMatch] = []
-        let pattern = #"\b(?:Dr|Mr|Mrs|Ms|Miss|Prof|Doctor)\.?\s+([A-Z][a-z]+(?:\s+[A-Z]\.?|\s+[A-Z][a-z]+)?)\b"#
+        let pattern = #"\b(?:Dr|Mr|Mrs|Ms|Miss|Prof|Doctor|Professor)\.?\s+([A-Z][a-z]+(?:\s+[A-Z]\.?|\s+[A-Z][a-z]+)?)\b"#
         if let regex = try? NSRegularExpression(pattern: pattern) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 guard let range = Range(match.range, in: text) else { continue }
                 let fullMatch = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !stopWords.contains(fullMatch.lowercased()) else { continue }
+                if match.numberOfRanges > 1, let nameRange = Range(match.range(at: 1), in: text) {
+                    let namePart = String(text[nameRange])
+                    guard !isDisallowedNameCandidate(namePart) else { continue }
+                }
+                guard !isDisallowedNameCandidate(fullMatch) else { continue }
                 results.append(
                     SensitiveEntityMatch(
                         category: "Practitioner / Person Name",
@@ -249,17 +333,24 @@ actor DocumentRedactionEngine {
         tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType, options: options) { tag, tokenRange in
             if tag == .personalName {
                 let nameStr = String(text[tokenRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if nameStr.count >= 3 && !stopWords.contains(nameStr.lowercased()) && !nameStr.contains("\n") {
-                    results.append(
-                        SensitiveEntityMatch(
-                            category: "Named Person",
-                            originalText: nameStr,
-                            tokenReplacement: tokenProvider(nameStr),
-                            pageIndex: pageIndex,
-                            isEnabled: true,
-                            tier: .directIdentifier
+                if nameStr.count >= 3 && !nameStr.contains("\n") && !nameStr.contains("\t") && !isDisallowedNameCandidate(nameStr) {
+                    let words = nameStr.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+                    let allCapitalized = words.allSatisfy { w in
+                        guard let first = w.first else { return false }
+                        return first.isUppercase
+                    }
+                    if allCapitalized && words.count >= 2 {
+                        results.append(
+                            SensitiveEntityMatch(
+                                category: "Named Person",
+                                originalText: nameStr,
+                                tokenReplacement: tokenProvider(nameStr),
+                                pageIndex: pageIndex,
+                                isEnabled: true,
+                                tier: .directIdentifier
+                            )
                         )
-                    )
+                    }
                 }
             }
             return true
@@ -270,18 +361,18 @@ actor DocumentRedactionEngine {
     private func findPatientIdentifiers(in text: String, pageIndex: Int, tokenProvider: (String) -> String) -> [SensitiveEntityMatch] {
         var results: [SensitiveEntityMatch] = []
 
-        // 1. NHS Number: 10 digits formatted e.g. "987 654 3210" or "9876543210"
-        let nhsPattern = #"\b\d{3}\s?\d{3}\s?\d{4}\b"#
-        if let regex = try? NSRegularExpression(pattern: nhsPattern) {
+        // 1. NHS Number: 10 digits formatted e.g. "987 654 3210" or "9876543210" or "NHS 1234567890"
+        let nhsPattern = #"\b(?:NHS\s*(?:Number|No\.?|#)?\s*[:#\-\s]*)?(\d{3}\s?\d{3}\s?\d{4})\b"#
+        if let regex = try? NSRegularExpression(pattern: nhsPattern, options: [.caseInsensitive]) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 guard let range = Range(match.range, in: text) else { continue }
-                let digits = String(text[range])
+                let fullStr = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
                 results.append(
                     SensitiveEntityMatch(
                         category: "NHS Number",
-                        originalText: digits,
-                        tokenReplacement: tokenProvider(digits),
+                        originalText: fullStr,
+                        tokenReplacement: tokenProvider(fullStr),
                         pageIndex: pageIndex,
                         isEnabled: true,
                         tier: .directIdentifier
@@ -290,27 +381,29 @@ actor DocumentRedactionEngine {
             }
         }
 
-        // 2. Structured MRN / Hospital Number: must have alphanumeric ID containing >= 2 digits
-        let mrnPattern = #"\b(?:MRN|Patient ID|Hospital ID|Chart ID)\s*[:#\-\s]\s*([A-Z0-9\-]{4,14})\b"#
+        // 2. Structured MRN / Hospital Number: e.g. "MRN 1234567", "MRN: 1234567", "Patient ID: P-98765"
+        let mrnPattern = #"\b(?:MRN|Patient ID|Hospital ID|Chart ID)\s*[:#\-\s]?\s*([A-Z0-9\-]{4,14})\b"#
         if let regex = try? NSRegularExpression(pattern: mrnPattern, options: [.caseInsensitive]) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
-                if match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) {
-                    let idCandidate = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let fullRange = Range(match.range, in: text) else { continue }
+                let fullStr = String(text[fullRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if match.numberOfRanges > 1, let idRange = Range(match.range(at: 1), in: text) {
+                    let idCandidate = String(text[idRange]).trimmingCharacters(in: .whitespacesAndNewlines)
                     let digitCount = idCandidate.filter { $0.isNumber }.count
-                    // Must contain at least 2 digits to prevent common words
-                    guard digitCount >= 2 && !stopWords.contains(idCandidate.lowercased()) else { continue }
-                    results.append(
-                        SensitiveEntityMatch(
-                            category: "Patient / Medical ID",
-                            originalText: idCandidate,
-                            tokenReplacement: tokenProvider(idCandidate),
-                            pageIndex: pageIndex,
-                            isEnabled: true,
-                            tier: .directIdentifier
-                        )
-                    )
+                    // Must contain at least 2 digits and not be in stop words
+                    guard digitCount >= 2 && !stopWords.contains(idCandidate.lowercased()) && !isDisallowedNameCandidate(idCandidate) else { continue }
                 }
+                results.append(
+                    SensitiveEntityMatch(
+                        category: "Patient / Medical ID",
+                        originalText: fullStr,
+                        tokenReplacement: tokenProvider(fullStr),
+                        pageIndex: pageIndex,
+                        isEnabled: true,
+                        tier: .directIdentifier
+                    )
+                )
             }
         }
 
@@ -333,9 +426,63 @@ actor DocumentRedactionEngine {
         // UK Postcodes
         results.append(contentsOf: findRegexMatches(pattern: #"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b"#, in: text, category: "Postcode", pageIndex: pageIndex, tier: .directIdentifier) { getOrMakeToken($0, "POSTCODE") })
 
-        // Street Addresses
-        results.append(contentsOf: findRegexMatches(pattern: #"\b\d{1,5}\s+[A-Za-z0-9\.\s]{3,25}(?:Road|Rd|Street|St|Avenue|Ave|Lane|Ln|Drive|Dr|Way|Boulevard|Blvd|Court|Ct)\b"#, in: text, category: "Street Address", pageIndex: pageIndex, tier: .directIdentifier) { getOrMakeToken($0, "ADDRESS") })
+        // Street Addresses: Require capitalized street name and explicit whole-word suffix
+        let streetSuffixes = #"(?:Road|Rd|Street|St|Avenue|Ave|Lane|Ln|Drive|Dr|Way|Boulevard|Blvd|Court|Ct|Close|Cl|Crescent|Cres|Gardens|Gdns|Place|Pl|Square|Sq|Terrace|Ter|Grove|Gr|Park|Mews|Row|Walk|Hill)"#
+        let streetPattern = #"\b\d{1,5}\s+(?:[A-Z][a-zA-Z0-9\.\'-]+\s+){1,3}"# + streetSuffixes + #"\b"#
 
+        if let regex = try? NSRegularExpression(pattern: streetPattern) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                guard let range = Range(match.range, in: text) else { continue }
+                let addressCandidate = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Disqualify if it contains duration/travel words (e.g. "40 minutes away", "20 minute drive")
+                let lower = addressCandidate.lowercased()
+                let durationKeywords = ["minute", "minutes", "min", "mins", "hour", "hours", "away", "commute", "travel", "approx", "ago"]
+                let hasDuration = durationKeywords.contains { lower.contains($0) }
+                guard !hasDuration else { continue }
+
+                let token = getOrMakeToken(addressCandidate, "ADDRESS")
+                results.append(
+                    SensitiveEntityMatch(
+                        category: "Street Address",
+                        originalText: addressCandidate,
+                        tokenReplacement: token,
+                        pageIndex: pageIndex,
+                        isEnabled: true,
+                        tier: .directIdentifier
+                    )
+                )
+            }
+        }
+
+        return results
+    }
+
+    private func findLocations(in text: String, pageIndex: Int, isStrict: Bool, tokenProvider: (String) -> String) -> [SensitiveEntityMatch] {
+        var results: [SensitiveEntityMatch] = []
+        guard isStrict else { return results }
+
+        let locationPattern = #"\b(?:lives\s+in|living\s+in|in|from|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"#
+        if let regex = try? NSRegularExpression(pattern: locationPattern, options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) {
+                    let locStr = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !stopWords.contains(locStr.lowercased()) && !isDisallowedNameCandidate(locStr) else { continue }
+                    results.append(
+                        SensitiveEntityMatch(
+                            category: "Location / Town",
+                            originalText: locStr,
+                            tokenReplacement: tokenProvider(locStr),
+                            pageIndex: pageIndex,
+                            isEnabled: true,
+                            tier: .quasiIdentifier
+                        )
+                    )
+                }
+            }
+        }
         return results
     }
 
@@ -418,7 +565,16 @@ actor DocumentRedactionEngine {
             case .redactedLabel:
                 replacement = "[REDACTED: \(match.category.uppercased())]"
             }
-            result = result.replacingOccurrences(of: match.originalText, with: replacement)
+
+            let escaped = NSRegularExpression.escapedPattern(for: match.originalText)
+            let isWordPattern = match.originalText.rangeOfCharacter(from: CharacterSet.alphanumerics) != nil
+            let pattern = isWordPattern ? "\\b\(escaped)\\b" : escaped
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(result.startIndex..<result.endIndex, in: result)
+                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: NSRegularExpression.escapedTemplate(for: replacement))
+            } else {
+                result = result.replacingOccurrences(of: match.originalText, with: replacement)
+            }
         }
         return result
     }

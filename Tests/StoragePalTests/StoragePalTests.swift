@@ -884,6 +884,186 @@ final class StoragePalTests: XCTestCase {
         XCTAssertNotNil(logGroup)
         XCTAssertEqual(logGroup?.totalBytes, 30_000_000)
     }
+
+    // MARK: - Clinical Sanitisation Priority QA Test Suite (Review Benchmark)
+
+    func testClinicalPriorityReviewRegressionSuite() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let sampleInput = """
+        Dummy Client Assessment Notes
+        Client: Sam R.
+        Assessment notes
+        Speech normal rate.
+        Prescribed sertraline 50 mg.
+        Lives approximately 40 minutes away.
+        Address: 14 Acacia Road.
+        Identifier: MRN 1234567.
+        """
+
+        let matches = await engine.scanText(
+            text: sampleInput,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let sanitized = await engine.redactText(originalText: sampleInput, matches: matches, mode: .aiTokenSwap)
+
+        // 1. Person name: Sam R. -> [PERSON_1] (Must replace)
+        XCTAssertFalse(sanitized.contains("Sam R."), "Direct person name 'Sam R.' must be replaced.")
+        XCTAssertTrue(sanitized.contains("[PERSON_1]"), "Expected [PERSON_1] token for Sam R.")
+
+        // 2. Document heading & title: 'Dummy Client Assessment Notes' & 'Assessment notes' (Must preserve)
+        XCTAssertTrue(sanitized.contains("Dummy Client Assessment Notes"), "Title 'Dummy Client Assessment Notes' must remain uncorrupted.")
+        XCTAssertTrue(sanitized.contains("Assessment notes"), "Section heading 'Assessment notes' must be preserved.")
+        XCTAssertFalse(sanitized.contains("Dummy Client [PERSON_1]"), "'Assessment Notes' must never be turned into a PERSON token.")
+
+        // 3. Clinical phrase: 'Speech normal rate.' (Must preserve)
+        XCTAssertTrue(sanitized.contains("Speech normal rate."), "Mental state examination finding 'Speech normal rate.' must be preserved.")
+        XCTAssertFalse(sanitized.contains("[PERSON_1] rate"), "'Speech normal' must never be turned into a PERSON token.")
+
+        // 4. Medication dose: 'sertraline 50 mg' (Must preserve)
+        XCTAssertTrue(sanitized.contains("sertraline 50 mg"), "Medication dose 'sertraline 50 mg' must be preserved.")
+
+        // 5. Travel-time description: 'approximately 40 minutes away' (Must preserve)
+        XCTAssertTrue(sanitized.contains("40 minutes away"), "Travel-time description '40 minutes away' must NOT be classified as an address.")
+        XCTAssertFalse(sanitized.contains("[ADDRESS_1] away"), "Duration '40 minutes away' must never receive an ADDRESS token.")
+
+        // 6. Street address: '14 Acacia Road' (Must replace)
+        XCTAssertFalse(sanitized.contains("14 Acacia Road"), "Street address '14 Acacia Road' must be replaced.")
+        XCTAssertTrue(sanitized.contains("[ADDRESS_1]"), "Expected [ADDRESS_1] token.")
+
+        // 7. Patient identifier: 'MRN 1234567' (Must replace)
+        XCTAssertFalse(sanitized.contains("1234567"), "Patient ID '1234567' must be replaced.")
+        XCTAssertTrue(sanitized.contains("[PATIENT_ID_1]"), "Expected [PATIENT_ID_1] token.")
+    }
+
+    func testClinicalTravelTimeVsAddressPrecision() async {
+        let engine = DocumentRedactionEngine()
+
+        // Case A: Travel time description -> retain unchanged
+        var mapA: [String: String] = [:]
+        var countersA: [String: Int] = [:]
+        let travelText = "Lives approximately 40 minutes away from clinic. About 20 minute drive."
+        let matchesA = await engine.scanText(
+            text: travelText,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &mapA,
+            tokenCounters: &countersA
+        )
+        let sanitizedA = await engine.redactText(originalText: travelText, matches: matchesA, mode: .aiTokenSwap)
+        XCTAssertEqual(sanitizedA, travelText, "Travel-time and proximity statements must remain 100% untouched.")
+
+        // Case B: Real street address -> replace with [ADDRESS_1]
+        var mapB: [String: String] = [:]
+        var countersB: [String: Int] = [:]
+        let addressText = "Lives at 14 Acacia Road, Guildford."
+        let matchesB = await engine.scanText(
+            text: addressText,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &mapB,
+            tokenCounters: &countersB
+        )
+        let sanitizedB = await engine.redactText(originalText: addressText, matches: matchesB, mode: .aiTokenSwap)
+        XCTAssertTrue(sanitizedB.contains("[ADDRESS_1]"), "Real street address '14 Acacia Road' must be tokenized.")
+        XCTAssertFalse(sanitizedB.contains("14 Acacia Road"))
+    }
+
+    func testBiographicalQuasiIdentifiersPreservation() async {
+        let engine = DocumentRedactionEngine()
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+
+        let biographicalText = """
+        Client works in project-management occupation, working four days per week.
+        Has two children aged 4 and 7 with long-term partner of approximately 9 years.
+        Received promotion around 18 months earlier.
+        Reported father's death when the client was 30.
+        Has one younger sister. Previous workplace EAP counselling around five years earlier.
+        """
+
+        let matches = await engine.scanText(
+            text: biographicalText,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let sanitized = await engine.redactText(originalText: biographicalText, matches: matches, mode: .aiTokenSwap)
+
+        // In standard internal clinical mode, formulation details must remain intact
+        XCTAssertTrue(sanitized.contains("two children aged 4 and 7"))
+        XCTAssertTrue(sanitized.contains("partner of approximately 9 years"))
+        XCTAssertTrue(sanitized.contains("promotion around 18 months earlier"))
+        XCTAssertTrue(sanitized.contains("father's death when the client was 30"))
+        XCTAssertTrue(sanitized.contains("one younger sister"))
+        XCTAssertTrue(sanitized.contains("working four days per week"))
+        XCTAssertTrue(sanitized.contains("EAP counselling"))
+    }
+
+    @MainActor
+    func testClinicalEndToEndTokenSwapAndRestoration() async {
+        let engine = DocumentRedactionEngine()
+        let tokenService = AITokenSwapService.shared
+
+        let originalDocument = """
+        Dummy Client Assessment Notes
+        Client: Sam R.
+        Assessment notes
+        Speech normal rate.
+        Medication: sertraline 50 mg daily.
+        Address: 14 Acacia Road.
+        MRN 1234567.
+        """
+
+        var entityMap: [String: String] = [:]
+        var counters: [String: Int] = [:]
+        let matches = await engine.scanText(
+            text: originalDocument,
+            template: .clinicalPsychology,
+            policy: .internalClinical,
+            sharedEntityTokenMap: &entityMap,
+            tokenCounters: &counters
+        )
+
+        let session = tokenService.createSession(
+            documentName: "dummy_client_assessment_notes.pdf",
+            template: .clinicalPsychology,
+            matches: matches
+        )
+
+        let aiPromptText = await engine.redactText(originalText: originalDocument, matches: matches, mode: .aiTokenSwap)
+
+        // Simulated AI response utilizing the tokens
+        let simulatedAIResponse = """
+        CLINICAL FORMULATION SUMMARY:
+        Reviewed notes for [PERSON_1] (Patient ID: [PATIENT_ID_1]).
+        The client resides at [ADDRESS_1] and takes sertraline 50 mg.
+        Mental state examination noted speech normal rate.
+        """
+
+        let (restoredText, replacementsCount) = tokenService.restoreRealData(
+            aiResponseText: simulatedAIResponse,
+            session: session
+        )
+
+        XCTAssertGreaterThan(replacementsCount, 0)
+        XCTAssertTrue(restoredText.contains("Sam R."))
+        XCTAssertTrue(restoredText.contains("MRN 1234567") || restoredText.contains("1234567"))
+        XCTAssertTrue(restoredText.contains("14 Acacia Road"))
+        XCTAssertTrue(restoredText.contains("speech normal rate"))
+        XCTAssertFalse(restoredText.contains("[PERSON_1]"))
+        XCTAssertFalse(restoredText.contains("[ADDRESS_1]"))
+
+        tokenService.deleteSession(id: session.id)
+    }
 }
 
 

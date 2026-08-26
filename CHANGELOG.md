@@ -3,7 +3,26 @@
 All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-## [0.20.0] - 2026-08-26
+
+## [0.21.0] - 2026-08-26
+
+### Fixed & Enhanced
+- **Clinical Sanitisation Precision & Token Integrity Engine (`DocumentRedactionEngine`)**:
+  - **Eliminated False-Positive `[PERSON_1]` Token Replacements**:
+    - Resolved heading and clinical observation corruption where `"Assessment Notes"`, `"Assessment notes"`, and `"Speech normal rate"` were erroneously classified as person names.
+    - Added explicit delimiter requirements (`:`, `-`, `–`, `—`, `|`) for header-based entity extractors (`Client: Sam R.`), preventing document titles like `"Dummy Client Assessment Notes"` from matching `"Assessment Notes"`.
+    - Added a comprehensive domain stop-words dictionary covering clinical terminology, Mental State Examination (MSE) parameters (`speech`, `mood`, `affect`, `thought`, `insight`, `judgement`, `orientation`, `rate`, `normal`, `euthymic`), psychometrics (`PHQ-9`, `GAD-7`, `AUDIT`), and structural document terms.
+    - Hardened Apple `NLTagger` NER candidate filtering against sentence-starters and domain terms.
+  - **Travel-Time vs Street Address Precision**:
+    - Enforced strict word boundaries (`\bWay\b`, `\bRoad\b`, `\bDrive\b`) on street suffixes to ensure travel-time descriptions (`"approximately 40 minutes away"`, `"20 minute drive"`) are never misclassified as addresses and remain preserved.
+    - Added duration keyword filters (`minute`, `minutes`, `hour`, `away`, `commute`) to disqualify non-address expressions.
+  - **Reversible Token Integrity & AI Privacy Bridge**:
+    - Upgraded `redactText` to use word-boundary regex substitutions, preventing partial word collisions and ensuring stable entity-to-token mappings during AI pseudonymization and de-anonymization passes.
+    - Verified complete preservation of medication doses (`"sertraline 50 mg"`), psychometric scores (`"PHQ-9 score 14"`), and biographical formulation details in standard internal clinical mode.
+  - **Comprehensive QA Test Suite**:
+    - Added regression tests covering the full review benchmark suite, travel-time proximity preservation, biographical quasi-identifiers, and end-to-end `AITokenSwapService` restoration.
+
+---
 
 ### Added
 - **Quick Scan & Free Up Space on Home / Hub Screen (`QuickCleanService`, `QuickCleanSheet`, & `DashboardView`)**:
