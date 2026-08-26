@@ -285,16 +285,28 @@ private struct TodayView: View {
                     Spacer()
                     HStack(spacing: 10) {
                         Button {
-                            model.startQuickCleanFlow()
+                            Task {
+                                await model.runQuickScan()
+                            }
                         } label: {
-                            Label("Quick Free Up", systemImage: "sparkles")
+                            HStack(spacing: 6) {
+                                if model.isQuickCleanScanning {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(.white)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                                Text(model.isQuickCleanScanning ? "Scanning…" : "Quick Scan")
+                            }
                         }
                         .buttonStyle(PalButtonStyle(prominent: true))
+                        .disabled(model.isQuickCleanScanning || model.isInlineQuickCleaning)
 
                         Button {
                             model.runScan()
                         } label: {
-                            Label("Check again", systemImage: "arrow.clockwise")
+                            Label("Full Check", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(PalButtonStyle())
                         .disabled(model.isScanning)
@@ -304,57 +316,20 @@ private struct TodayView: View {
                 if let report = model.report, let disk = report.internalDisk {
                     permissionBannerIfNeeded(report)
                     healthCard(report: report, disk: disk)
-                    quickCleanCard
+                    TodayQuickScanSection()
                     forecastCard
                     nextSteps(report)
                 } else {
                     welcomeCard
+                    TodayQuickScanSection()
                 }
             }
             .padding(34)
             .frame(maxWidth: 900, alignment: .leading)
         }
-    }
-
-    private var quickCleanCard: some View {
-        PalCard(padding: 18) {
-            HStack(spacing: 18) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.palMint.opacity(0.14))
-                        .frame(width: 46, height: 46)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Color.palMint)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text("Quick Free Up Space")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                        Text("Low Risk")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.palMint)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Color.palMint.opacity(0.12), in: Capsule())
-                    }
-                    Text("Clear disposable browser caches, stale crash logs, build artifacts, and app leftovers without decision fatigue.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.palMuted)
-                }
-
-                Spacer()
-
-                Button {
-                    model.startQuickCleanFlow()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bolt.fill")
-                        Text("Review & Free Up…")
-                    }
-                }
-                .buttonStyle(PalButtonStyle(prominent: true))
+        .task {
+            if model.quickCleanScanResult == nil && !model.isQuickCleanScanning {
+                await model.runQuickScan()
             }
         }
     }
@@ -452,8 +427,18 @@ private struct TodayView: View {
                         ProgressView().tint(Color.palMint).frame(width: 220)
                     } else {
                         HStack(spacing: 12) {
-                            Button("Quick Free Up Space") { model.startQuickCleanFlow() }
-                                .buttonStyle(PalButtonStyle(prominent: true))
+                            Button {
+                                Task {
+                                    await model.runQuickScan()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "sparkles")
+                                    Text("Quick Scan")
+                                }
+                            }
+                            .buttonStyle(PalButtonStyle(prominent: true))
+
                             Button("Check my Mac") { model.runScan() }
                                 .buttonStyle(PalButtonStyle())
                         }
@@ -599,6 +584,451 @@ private struct RecommendationRow: View {
                 Spacer()
                 Button(item.actionLabel) { model.handle(item) }
                     .buttonStyle(PalButtonStyle())
+            }
+        }
+    }
+}
+
+private struct TodayQuickScanSection: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var expandedCategoryIDs: Set<String> = []
+    @State private var deselectedItemIDs: Set<String> = []
+
+    private var scanResult: QuickCleanScanResult? {
+        model.quickCleanScanResult
+    }
+
+    private var allItems: [QuickCleanItem] {
+        scanResult?.items ?? []
+    }
+
+    private var selectedItems: [QuickCleanItem] {
+        allItems.filter { !deselectedItemIDs.contains($0.id) }
+    }
+
+    private var selectedBytes: Int64 {
+        selectedItems.reduce(0) { $0 + $1.bytes }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if model.isInlineQuickCleaning {
+                cleaningCard
+            } else if let summary = model.lastQuickCleanSummary {
+                summaryCard(summary: summary)
+            } else if model.isQuickCleanScanning {
+                scanningCard
+            } else if let result = scanResult {
+                if result.items.isEmpty {
+                    cleanFreshCard
+                } else {
+                    resultsCard(result: result)
+                }
+            } else {
+                readyToScanCard
+            }
+        }
+    }
+
+    // Ready to scan state card
+    private var readyToScanCard: some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 18) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.palMint.opacity(0.14))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(Color.palMint)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Quick Scan & Smart Clean")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                        Text("Low Risk")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.palMint)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.palMint.opacity(0.12), in: Capsule())
+                    }
+                    Text("Intelligently scans disposable browser web caches, stale crash dumps, build artifacts, and orphaned app leftovers.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+
+                Button {
+                    Task {
+                        await model.runQuickScan()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                        Text("Quick Scan Now")
+                    }
+                }
+                .buttonStyle(PalButtonStyle(prominent: true))
+            }
+        }
+    }
+
+    // Scanning in progress card
+    private var scanningCard: some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 16) {
+                ProgressView()
+                    .tint(Color.palMint)
+                    .scaleEffect(1.1)
+                    .frame(width: 44, height: 44)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Intelligent Quick Scan in progress…")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                    Text(model.quickCleanScanMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+            }
+        }
+    }
+
+    // Cleaning in progress card
+    private var cleaningCard: some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 16) {
+                ProgressView()
+                    .tint(Color.palMint)
+                    .scaleEffect(1.1)
+                    .frame(width: 44, height: 44)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Safely Freeing Up Storage…")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                    Text("Clearing temporary files and safely moving clutter to Trash.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+            }
+        }
+    }
+
+    // Post-clean summary card
+    private func summaryCard(summary: QuickCleanSummary) -> some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.palMint.opacity(0.16))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(Color.palMint)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Freed Up \(ByteText.string(summary.reclaimedBytes))!")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.palInk)
+                        Text("Cleaned \(summary.cleanedItemsCount) items")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.palMint)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.palMint.opacity(0.12), in: Capsule())
+                    }
+                    Text("All cleaned items were safely cleared or placed in Trash.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button("Scan Again") {
+                        model.lastQuickCleanSummary = nil
+                        Task {
+                            await model.runQuickScan()
+                        }
+                    }
+                    .buttonStyle(PalButtonStyle())
+
+                    Button("Dismiss") {
+                        model.lastQuickCleanSummary = nil
+                    }
+                    .buttonStyle(PalButtonStyle(prominent: true))
+                }
+            }
+        }
+    }
+
+    // Clean / Fresh state card
+    private var cleanFreshCard: some View {
+        PalCard(padding: 18) {
+            HStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.palMint.opacity(0.14))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(Color.palMint)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Your Mac is Clean & Fresh")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text("No temporary caches, stale crash dumps, or orphaned residue found.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMuted)
+                }
+
+                Spacer()
+
+                Button("Scan Again") {
+                    Task {
+                        await model.runQuickScan()
+                    }
+                }
+                .buttonStyle(PalButtonStyle())
+            }
+        }
+    }
+
+    // Discovered results card
+    private func resultsCard(result: QuickCleanScanResult) -> some View {
+        PalCard(padding: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header row
+                HStack(spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.palMint.opacity(0.16))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(Color.palMint)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text("Quick Scan Found \(ByteText.string(selectedBytes))")
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color.palInk)
+                            Text("Ready to Clean")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.palMint)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.palMint.opacity(0.12), in: Capsule())
+                        }
+                        Text("\(selectedItems.count) disposable files and folders selected. 100% safe to remove.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.palMuted)
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 10) {
+                        Button {
+                            Task {
+                                await model.performInlineQuickClean(items: selectedItems)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                Text("Clean & Free Up (\(ByteText.string(selectedBytes)))")
+                            }
+                        }
+                        .buttonStyle(PalButtonStyle(prominent: true))
+                        .disabled(selectedItems.isEmpty)
+
+                        Button {
+                            model.isQuickCleanSheetPresented = true
+                        } label: {
+                            Text("Detailed Review…")
+                        }
+                        .buttonStyle(PalButtonStyle())
+
+                        Button {
+                            Task {
+                                await model.runQuickScan()
+                            }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(PalButtonStyle())
+                        .help("Rescan Quick Targets")
+                    }
+                }
+
+                Divider().opacity(0.5)
+
+                // Itemized Category Breakdown
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("WHAT QUICK SCAN FOUND (\(result.groups.count) CATEGORIES)")
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(Color.palMint)
+                        Spacer()
+                        Text("Click Inspect to see individual items")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMuted)
+                    }
+
+                    ForEach(result.groups) { group in
+                        categoryRow(group: group)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.palMint)
+                    Text("Zero-Risk Guarantee: Documents, photos, git repositories, cookies, and saved passwords are never touched.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.palMuted)
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private func categoryRow(group: QuickCleanCategoryGroup) -> some View {
+        let isExpanded = expandedCategoryIDs.contains(group.id)
+        let groupSelectedItems = group.items.filter { !deselectedItemIDs.contains($0.id) }
+        let isFullySelected = groupSelectedItems.count == group.items.count
+        let isPartiallySelected = !groupSelectedItems.isEmpty && !isFullySelected
+
+        return VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // Category Checkbox
+                Button {
+                    if isFullySelected {
+                        for item in group.items {
+                            deselectedItemIDs.insert(item.id)
+                        }
+                    } else {
+                        for item in group.items {
+                            deselectedItemIDs.remove(item.id)
+                        }
+                    }
+                } label: {
+                    Image(systemName: isFullySelected ? "checkmark.circle.fill" : (isPartiallySelected ? "minus.circle.fill" : "circle"))
+                        .font(.system(size: 17))
+                        .foregroundStyle(isFullySelected || isPartiallySelected ? group.kind.tint : Color.palMuted)
+                }
+                .buttonStyle(.plain)
+
+                // Category Icon
+                Image(systemName: group.kind.symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(group.kind.tint)
+                    .frame(width: 30, height: 30)
+                    .background(group.kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                // Title & Subtitle
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(group.kind.rawValue)
+                            .font(.system(size: 13, weight: .bold))
+                        Text("(\(group.items.count))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.palMuted)
+                    }
+                    Text(group.kind.safetyDescription)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.palMuted)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(ByteText.string(group.totalBytes))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.palInk)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(group.kind.tint.opacity(0.10), in: Capsule())
+
+                // Expand / Collapse
+                Button {
+                    if isExpanded {
+                        expandedCategoryIDs.remove(group.id)
+                    } else {
+                        expandedCategoryIDs.insert(group.id)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isExpanded ? "Hide" : "Inspect")
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.palMint)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(Color.black.opacity(0.02), in: RoundedRectangle(cornerRadius: 10))
+
+            if isExpanded {
+                VStack(spacing: 6) {
+                    ForEach(group.items) { item in
+                        let isSelected = !deselectedItemIDs.contains(item.id)
+                        HStack(spacing: 10) {
+                            Button {
+                                if isSelected {
+                                    deselectedItemIDs.insert(item.id)
+                                } else {
+                                    deselectedItemIDs.remove(item.id)
+                                }
+                            } label: {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(isSelected ? group.kind.tint : Color.palMuted)
+                            }
+                            .buttonStyle(.plain)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(item.detail)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.palMuted)
+                            }
+
+                            Spacer()
+
+                            Text(ByteText.string(item.bytes))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.palInk)
+
+                            Button {
+                                model.open(item.url)
+                            } label: {
+                                Image(systemName: "arrow.up.forward.app")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Reveal in Finder")
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 10)
+                        .background(Color.black.opacity(0.015), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .padding(.leading, 24)
             }
         }
     }

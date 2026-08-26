@@ -93,75 +93,470 @@ private struct RecommendationRowDetail: View {
 
 struct DrivesView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var selectedSetupDisk: DiskSnapshot? = nil
+    @State private var selectedSetupPreset: DriveArchivePresetKind = .downloadsRelief
+    @State private var isSetupSheetPresented = false
+
+    private var externalDisks: [DiskSnapshot] {
+        model.report?.externalDisks ?? []
+    }
+
+    private var internalDisk: DiskSnapshot? {
+        model.report?.internalDisk
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                SectionHeading(
-                    eyebrow: "Drives",
-                    title: "Your storage, at a glance",
-                    detail: "External archive drives appear automatically when they’re connected."
-                )
+                // Header & Actions
+                HStack(alignment: .top) {
+                    SectionHeading(
+                        eyebrow: "Drives & Archival",
+                        title: "Your Drives & Automated Space Relief",
+                        detail: "Configure external drives to automatically archive old downloads, offload unused files when internal storage gets low, or run regular backups."
+                    )
+                    Spacer()
+                    HStack(spacing: 10) {
+                        Button {
+                            selectedSetupDisk = externalDisks.first
+                            selectedSetupPreset = .downloadsRelief
+                            isSetupSheetPresented = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "externaldrive.badge.timemachine")
+                                Text("Add Archiving Target…")
+                            }
+                        }
+                        .buttonStyle(PalButtonStyle(prominent: true))
 
+                        Button {
+                            model.runScan()
+                        } label: {
+                            Label("Refresh Drives", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(PalButtonStyle())
+                        .disabled(model.isScanning)
+                    }
+                }
+
+                // Drives Grid
                 if let disks = model.report?.disks, !disks.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 16)], spacing: 16) {
                         ForEach(disks) { disk in
                             driveCard(disk)
                         }
                     }
                 } else {
                     PalCard {
-                        Text(model.isScanning ? model.scanMessage : "Run a check to see your drives.")
+                        Text(model.isScanning ? model.scanMessage : "Run a check to see your connected drives.")
                             .foregroundStyle(Color.palMuted)
                     }
                 }
 
-                PalCard {
-                    HStack(spacing: 16) {
-                        Image(systemName: "externaldrive.badge.timemachine")
-                            .font(.system(size: 24))
-                            .foregroundStyle(Color.palMint)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("A simple archive habit")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Move completed projects and old media to an external drive; keep current work local. Keep a second copy of anything irreplaceable.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.palMuted)
-                        }
-                    }
-                }
+                // Low Storage Safeguard Card
+                lowSpaceSafeguardCard
+
+                // Quick Setup Presets
+                presetsSection
+
+                // Recent External Archiving History
+                archivalHistorySection
             }
             .padding(34)
             .frame(maxWidth: 900, alignment: .leading)
         }
+        .sheet(isPresented: $isSetupSheetPresented) {
+            DriveArchivalSetupSheet(disk: selectedSetupDisk, preset: selectedSetupPreset)
+                .environmentObject(model)
+        }
     }
 
+    // MARK: - Drive Card
     private func driveCard(_ disk: DiskSnapshot) -> some View {
-        PalCard {
-            VStack(alignment: .leading, spacing: 15) {
-                HStack {
-                    Image(systemName: disk.isInternal ? "internaldrive.fill" : "externaldrive.fill")
+        let rules = model.rules(for: disk)
+
+        return PalCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 14) {
+                // Top Badges & Icon
+                HStack(spacing: 10) {
+                    Image(systemName: disk.isInternal ? "internaldrive.fill" : (rules.isEmpty ? "externaldrive.fill" : "externaldrive.badge.timemachine"))
                         .font(.system(size: 22))
                         .foregroundStyle(disk.isInternal ? Color.palInk : Color.palMint)
+                        .frame(width: 36, height: 36)
+                        .background((disk.isInternal ? Color.palInk : Color.palMint).opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(disk.name)
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                        Text(disk.isInternal ? "Mac Internal Boot Storage" : disk.path.path)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.palMuted)
+                            .lineLimit(1)
+                    }
+
                     Spacer()
-                    Text(disk.isInternal ? "THIS MAC" : (disk.isRemovable ? "REMOVABLE" : "EXTERNAL"))
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(1)
-                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(disk.isInternal ? "THIS MAC" : (disk.isRemovable ? "REMOVABLE" : "EXTERNAL"))
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(.secondary)
+
+                        if !rules.isEmpty {
+                            Text("ARCHIVE TARGET")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.palMint.opacity(0.16), in: Capsule())
+                                .foregroundStyle(Color.palMint)
+                        }
+                    }
                 }
-                Text(disk.name)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                StorageBar(usedFraction: disk.usedFraction, tint: disk.usedFraction > 0.9 ? .orange : .palMint)
+
+                // Storage Bar
+                StorageBar(usedFraction: disk.usedFraction, tint: disk.usedFraction > 0.9 ? .orange : (disk.isInternal ? Color.palInk : Color.palMint))
+
                 HStack {
                     Text("\(ByteText.string(disk.availableBytes)) free")
                         .fontWeight(.semibold)
                     Spacer()
-                    Text(ByteText.string(disk.totalBytes))
+                    Text("\(ByteText.string(disk.usedBytes)) used of \(ByteText.string(disk.totalBytes))")
                         .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 12))
-                Button("Open in Finder") { model.openFolder(disk.path) }
-                    .buttonStyle(PalButtonStyle())
+                .font(.system(size: 11))
+
+                Divider().opacity(0.5)
+
+                if disk.isInternal {
+                    // Internal Disk Action
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Local SSD Status")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(disk.usedFraction > 0.85 ? "Running tight on space" : "Healthy capacity")
+                                .font(.system(size: 10))
+                                .foregroundStyle(disk.usedFraction > 0.85 ? .orange : Color.palMuted)
+                        }
+
+                        Spacer()
+
+                        Button("Quick Clean") {
+                            model.startQuickCleanFlow()
+                        }
+                        .buttonStyle(PalButtonStyle(prominent: true))
+
+                        Button("Open in Finder") {
+                            model.openFolder(disk.path)
+                        }
+                        .buttonStyle(PalButtonStyle())
+                    }
+                } else {
+                    // External / Removable Disk Automation Details
+                    if !rules.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("\(rules.count) Active Automation Rule(s)", systemImage: "bolt.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color.palMint)
+                                Spacer()
+                            }
+
+                            ForEach(rules) { rule in
+                                HStack(spacing: 8) {
+                                    Image(systemName: rule.targetAction.icon)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.palMint)
+                                    Text(rule.name)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(rule.schedule.title)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.palMint.opacity(0.12), in: Capsule())
+                                        .foregroundStyle(Color.palMint)
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 8)
+                                .background(Color.black.opacity(0.02), in: RoundedRectangle(cornerRadius: 6))
+                            }
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    model.executeRules(for: disk)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "play.fill")
+                                        Text("Run Archive Now")
+                                    }
+                                }
+                                .buttonStyle(PalButtonStyle(prominent: true))
+
+                                Button {
+                                    selectedSetupDisk = disk
+                                    selectedSetupPreset = .custom
+                                    isSetupSheetPresented = true
+                                } label: {
+                                    Text("Add Rule…")
+                                }
+                                .buttonStyle(PalButtonStyle())
+
+                                Spacer()
+
+                                Button {
+                                    model.openFolder(disk.path)
+                                } label: {
+                                    Image(systemName: "arrow.up.forward.app")
+                                }
+                                .buttonStyle(PalButtonStyle())
+                                .help("Open in Finder")
+
+                                if disk.isRemovable {
+                                    Button {
+                                        model.ejectDrive(disk)
+                                    } label: {
+                                        Image(systemName: "eject.fill")
+                                    }
+                                    .buttonStyle(PalButtonStyle())
+                                    .help("Eject External Drive")
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                    } else {
+                        // Not configured yet
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Automate space relief by moving old downloads or creating backups on this drive.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.palMuted)
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    selectedSetupDisk = disk
+                                    selectedSetupPreset = .downloadsRelief
+                                    isSetupSheetPresented = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "bolt.fill")
+                                        Text("Set up Automated Archiving")
+                                    }
+                                }
+                                .buttonStyle(PalButtonStyle(prominent: true))
+
+                                Spacer()
+
+                                Button {
+                                    model.openFolder(disk.path)
+                                } label: {
+                                    Image(systemName: "arrow.up.forward.app")
+                                }
+                                .buttonStyle(PalButtonStyle())
+                                .help("Open in Finder")
+
+                                if disk.isRemovable {
+                                    Button {
+                                        model.ejectDrive(disk)
+                                    } label: {
+                                        Image(systemName: "eject.fill")
+                                    }
+                                    .buttonStyle(PalButtonStyle())
+                                    .help("Eject External Drive")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Low Space Safeguard Card
+    private var lowSpaceSafeguardCard: some View {
+        PalCard(padding: 20) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(Color.orange.opacity(0.14))
+                            .frame(width: 38, height: 38)
+                        Image(systemName: "gauge.badge.plus")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.orange)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mac Low-Space Auto-Relief")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                        Text("Automatically trigger active external archiving rules when Mac free space drops below threshold.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.palMuted)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: Binding(
+                        get: { model.lowSpaceConfig.isEnabled && model.lowSpaceConfig.autoExecuteRules },
+                        set: { enabled in
+                            model.lowSpaceConfig.isEnabled = enabled
+                            model.lowSpaceConfig.autoExecuteRules = enabled
+                            model.saveLowSpaceConfig()
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                }
+
+                if model.lowSpaceConfig.isEnabled && model.lowSpaceConfig.autoExecuteRules {
+                    Divider().opacity(0.6)
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("INTERNAL FREE SPACE THRESHOLD")
+                                .font(.system(size: 9, weight: .bold))
+                                .tracking(1)
+                                .foregroundStyle(.orange)
+
+                            HStack(spacing: 8) {
+                                Slider(
+                                    value: Binding(
+                                        get: { model.lowSpaceConfig.thresholdGB },
+                                        set: {
+                                            model.lowSpaceConfig.thresholdGB = $0
+                                            model.saveLowSpaceConfig()
+                                        }
+                                    ),
+                                    in: 10...100,
+                                    step: 5
+                                )
+                                Text("< \(Int(model.lowSpaceConfig.thresholdGB)) GB free")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.orange)
+                                    .frame(width: 95, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Quick Presets Section
+    private var presetsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("QUICK ARCHIVING & BACKUP TEMPLATES")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(Color.palMint)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                presetCard(
+                    preset: .downloadsRelief,
+                    title: "Downloads Space Relief",
+                    detail: "Auto-move downloads >14d to external storage when Mac SSD is tight.",
+                    icon: "arrow.down.circle.fill"
+                )
+                presetCard(
+                    preset: .oldUnusedFiles,
+                    title: "Archive Old & Large Files",
+                    detail: "Offload files dormant >30d (>50 MB) to keep your Mac lean.",
+                    icon: "clock.arrow.circlepath"
+                )
+                presetCard(
+                    preset: .documentsBackup,
+                    title: "Continuous Documents Backup",
+                    detail: "Regular scheduled backup copy of ~/Documents to external media.",
+                    icon: "doc.on.doc.fill"
+                )
+            }
+        }
+    }
+
+    private func presetCard(preset: DriveArchivePresetKind, title: String, detail: String, icon: String) -> some View {
+        PalCard(padding: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundStyle(Color.palMint)
+                        .frame(width: 32, height: 32)
+                        .background(Color.palMint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .bold))
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.palMuted)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 4)
+
+                Button("Configure on Drive…") {
+                    selectedSetupDisk = externalDisks.first
+                    selectedSetupPreset = preset
+                    isSetupSheetPresented = true
+                }
+                .buttonStyle(PalButtonStyle())
+                .font(.system(size: 11))
+            }
+        }
+    }
+
+    // MARK: - Archival History Section
+    private var archivalHistorySection: some View {
+        let externalLogs = model.maintenanceLogs.filter { $0.actionDescription.contains("External") || $0.actionDescription.contains("Archive") }
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("RECENT EXTERNAL TRANSFERS")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(Color.palMint)
+
+            if externalLogs.isEmpty {
+                PalCard(padding: 14) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(Color.palMuted)
+                        Text("No external drive archiving or backup transfers executed yet.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.palMuted)
+                    }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(externalLogs.prefix(5))) { log in
+                        PalCard(padding: 12) {
+                            HStack(spacing: 12) {
+                                Image(systemName: log.errorDetails != nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                                    .foregroundStyle(log.errorDetails != nil ? .orange : Color.palMint)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(log.ruleName).fontWeight(.bold)
+                                        if let reason = log.triggerReason {
+                                            Text(reason.displayLabel)
+                                                .font(.system(size: 8, weight: .bold))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(Color.palMint.opacity(0.18), in: Capsule())
+                                                .foregroundStyle(Color.palMint)
+                                        }
+                                    }
+                                    Text(log.actionDescription)
+                                        .foregroundStyle(Color.palMuted)
+                                }
+                                .font(.system(size: 11))
+
+                                Spacer()
+
+                                Text(log.timestamp.formatted(date: .numeric, time: .shortened))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -35,7 +35,10 @@ cp -X "$BUILD_DIR/release/StoragePal" "$MACOS_DIR/StoragePal"
 cp -X "$PROJECT_DIR/AppResources/Info.plist" "$CONTENTS_DIR/Info.plist"
 chmod +x "$MACOS_DIR/StoragePal"
 
-xattr -cr "$APP_DIR" 2>/dev/null || true
+find "$APP_DIR" -type f -name "._*" -delete 2>/dev/null || true
+find "$APP_DIR" -exec xattr -c {} + 2>/dev/null || true
+xattr -c "$APP_DIR" 2>/dev/null || true
+xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
 codesign --force --sign - "$APP_DIR"
 codesign -v "$APP_DIR"
 

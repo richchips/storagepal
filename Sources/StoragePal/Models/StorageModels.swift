@@ -224,6 +224,42 @@ enum MaintenanceAction: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+public enum DriveArchivePresetKind: String, CaseIterable, Identifiable, Codable {
+    case downloadsRelief = "downloadsRelief"
+    case oldUnusedFiles = "oldUnusedFiles"
+    case documentsBackup = "documentsBackup"
+    case custom = "custom"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .downloadsRelief: "Auto-Archive Downloads (Space Relief)"
+        case .oldUnusedFiles: "Archive Old & Large Files"
+        case .documentsBackup: "Backup Documents & Projects"
+        case .custom: "Custom Archiving or Backup"
+        }
+    }
+
+    public var subtitle: String {
+        switch self {
+        case .downloadsRelief: "Automatically moves downloads older than 14 days to the external drive when Mac storage is low."
+        case .oldUnusedFiles: "Moves files dormant for >30 days and >50 MB to external storage to keep your internal SSD nimble."
+        case .documentsBackup: "Copies active documents to the external drive on a recurring schedule as a safe backup."
+        case .custom: "Fully customize source folder, age/size filters, transfer action, and trigger schedule."
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .downloadsRelief: "arrow.down.circle.fill"
+        case .oldUnusedFiles: "clock.arrow.circlepath"
+        case .documentsBackup: "doc.on.doc.fill"
+        case .custom: "slider.horizontal.3"
+        }
+    }
+}
+
 enum RuleTriggerReason: Codable, Hashable, Sendable {
     case scheduled(schedule: String)
     case folderSizeExceeded(currentSizeGB: Double, limitGB: Double)

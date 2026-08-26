@@ -95,6 +95,7 @@ Storage Pal/
             ├── AITokenRestoreSheet.swift # AI Privacy Bridge modal to reverse pseudonymized tokens and restore real confidential data
             ├── AppUpdateSheet.swift # In-app software updater modal with release notes, progress bar, and 1-click install
             ├── DriveConsolidatorView.swift # Cross-volume multi-drive duplicate comparator and merge planner
+            ├── DriveArchivalSetupSheet.swift # Automated external drive archiving and backup target setup sheet
             ├── LocalArchivalHubView.swift # Cloud subscription cost calculator, local/external drive manager, and NAS helper
             └── TreemapView.swift # Interactive visual proportional treemap and inspector
 ```
@@ -138,6 +139,7 @@ Storage Pal/
 | [`PalVaultView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/PalVaultView.swift) | Hardware-backed biometric Touch ID storage vault and AES-GCM encrypted file browser. | `PalVaultView` |
 | [`ConfidentialSanitizerView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/ConfidentialSanitizerView.swift) | Drag-and-drop EXIF/GPS/PDF metadata inspector, clean exporter, and permanent 3-pass file shredder. | `ConfidentialSanitizerView` |
 | [`DriveConsolidatorView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/DriveConsolidatorView.swift) | Cross-volume multi-drive duplicate comparator and automated backup merge planner. | `DriveConsolidatorView` |
+| [`DriveArchivalSetupSheet.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/DriveArchivalSetupSheet.swift) | Automated external drive archiving and backup target setup sheet with low-space triggers and templates. | `DriveArchivalSetupSheet` |
 | [`LocalArchivalHubView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/LocalArchivalHubView.swift) | Cloud subscription savings estimator ($/yr), connected local/external drive manager, and NAS SMB connector. | `LocalArchivalHubView` |
 | [`DuplicateFinderView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/DuplicateFinderView.swift) | Universal duplicate file browser with folder selection, size filter, preview, report copying, and batch trashing. | `DuplicateFinderView` |
 | [`AppUninstallerView.swift`](file:///Users/richpomfret/Documents/ChatGPT/Storage%20Pal/Sources/StoragePal/Views/AppUninstallerView.swift) | Installed application search, orphaned leftovers inspector, Full Disk Access advisory banner, and complete uninstallation sheet. | `AppUninstallerView`, `AppUninstallDetailSheet` |

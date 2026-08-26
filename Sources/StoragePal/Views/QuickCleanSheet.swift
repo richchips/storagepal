@@ -75,7 +75,7 @@ struct QuickCleanSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Quick Free Up Space")
+                Text("Quick Scan & Smart Clean")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                 Text("Low-risk cleanup of temporary caches, stale logs, and leftover clutter.")
                     .font(.system(size: 12))

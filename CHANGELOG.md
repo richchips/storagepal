@@ -4,6 +4,28 @@ All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [0.22.0] - 2026-08-26
+
+### Added & Enhanced
+- **Intelligent Quick Scan & Smart Clean on Today Dashboard (`DashboardView`, `QuickCleanService`, `AppModel`)**:
+  - Direct **"Quick Scan"** button in Today header with dynamic progress indication.
+  - Interactive **Itemized Discovery Breakdown** displayed directly on the Today screen with categories, item counts, size badges, and safety disclosures.
+  - Expandable **Inspect** disclosures per category to view individual file paths, sizes, and 1-click **Reveal in Finder** buttons.
+  - 1-Click **"Clean & Free Up ([Size])"** action for immediate, low-risk space relief with zero fuss.
+  - Celebratory post-clean feedback card summarizing reclaimed space.
+- **External Drive Automated Archiving & Backup Hub in Drives (`DrivesView`, `DriveArchivalSetupSheet`, `AppModel`)**:
+  - Connected external and removable drives now feature direct **Automated Archiving & Backup** controls with active rule badges.
+  - Dedicated **`DriveArchivalSetupSheet`** with 1-click presets:
+    - 📥 **Smart Downloads Relief**: Auto-moves downloads older than 14 days to the external drive when Mac storage is low (or on a schedule).
+    - 🗄️ **Archive Old & Large Files**: Auto-offloads large dormant files (>50 MB, >30 days old) to external media.
+    - 🔄 **Continuous Documents Backup**: Creates regular scheduled backup copies of `~/Documents` on external drives.
+    - ⚙️ **Custom Rules**: Full customization of source folders, age/size filters, Move vs Copy transfer modes, and automated `YYYY-MM` date subfolders.
+  - **Mac Low-Space Auto-Relief**: Master switch and free space threshold slider (`< 25 GB` free) to automatically trigger external archiving rules when internal Mac SSD storage runs tight.
+  - **Live File Match Preview**: Instant live count and gigabyte calculation of matching files in source folders before activating rules.
+  - **Recent External Transfers Log**: Audit feed tracking recent automated transfers to external drives.
+
+---
+
 ## [0.21.0] - 2026-08-26
 
 ### Fixed & Enhanced

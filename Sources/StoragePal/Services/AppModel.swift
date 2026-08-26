@@ -26,6 +26,9 @@ final class AppModel: ObservableObject {
     @Published var isQuickCleanSheetPresented = false
     @Published var quickCleanScanResult: QuickCleanScanResult?
     @Published var isQuickCleanScanning = false
+    @Published var quickCleanScanMessage = "Ready to quick scan"
+    @Published var lastQuickCleanSummary: QuickCleanSummary?
+    @Published var isInlineQuickCleaning = false
 
     private let scanner = StorageScanner()
     private let uninstaller = AppUninstallerService()
@@ -502,6 +505,34 @@ final class AppModel: ObservableObject {
         if let index = maintenanceRules.firstIndex(where: { $0.id == rule.id }) {
             maintenanceRules[index].isEnabled.toggle()
             saveMaintenanceRules()
+        }
+    }
+
+    func rules(for disk: DiskSnapshot) -> [MaintenanceRule] {
+        maintenanceRules.filter { rule in
+            if let dest = rule.destinationFolderURL {
+                return dest.path.hasPrefix(disk.path.path)
+            }
+            if let volume = rule.externalVolumeName {
+                return volume.lowercased() == disk.name.lowercased()
+            }
+            return false
+        }
+    }
+
+    func executeRules(for disk: DiskSnapshot) {
+        let driveRules = rules(for: disk).filter { $0.isEnabled }
+        for rule in driveRules {
+            executeRule(rule, triggerReason: .manual)
+        }
+    }
+
+    func ejectDrive(_ disk: DiskSnapshot) {
+        do {
+            try NSWorkspace.shared.unmountAndEjectDevice(at: disk.path)
+            runScan()
+        } catch {
+            errorMessage = "Could not eject \(disk.name): \(error.localizedDescription)"
         }
     }
 
@@ -1169,19 +1200,38 @@ final class AppModel: ObservableObject {
     // MARK: - Quick Clean Orchestration
 
     func startQuickCleanFlow() {
-        isQuickCleanSheetPresented = true
         if quickCleanScanResult == nil && !isQuickCleanScanning {
             Task {
-                await runQuickScan()
+                await runQuickScan(openSheet: true)
             }
+        } else {
+            isQuickCleanSheetPresented = true
         }
     }
 
-    func runQuickScan() async {
+    func runQuickScan(openSheet: Bool = false) async {
         isQuickCleanScanning = true
-        let result = await quickCleanService.scanQuickCleanTargets()
+        quickCleanScanMessage = "Checking disposable web caches & logs…"
+        let result = await quickCleanService.scanQuickCleanTargets { [weak self] message in
+            Task { @MainActor in
+                self?.quickCleanScanMessage = message
+            }
+        }
         self.quickCleanScanResult = result
         self.isQuickCleanScanning = false
+        self.quickCleanScanMessage = "Quick scan complete"
+        if openSheet {
+            self.isQuickCleanSheetPresented = true
+        }
+    }
+
+    func performInlineQuickClean(items: [QuickCleanItem]? = nil) async {
+        let itemsToClean = items ?? (quickCleanScanResult?.items ?? [])
+        guard !itemsToClean.isEmpty else { return }
+        isInlineQuickCleaning = true
+        let summary = await executeQuickClean(selectedItems: itemsToClean)
+        self.lastQuickCleanSummary = summary
+        self.isInlineQuickCleaning = false
     }
 
     func executeQuickClean(selectedItems: [QuickCleanItem]) async -> QuickCleanSummary {

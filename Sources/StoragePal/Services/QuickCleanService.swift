@@ -96,6 +96,20 @@ actor QuickCleanService {
             )
         }
 
+        for candidate in devResult.creativeCacheCandidates {
+            items.append(
+                QuickCleanItem(
+                    id: "creative-\(candidate.id)",
+                    name: candidate.name,
+                    url: candidate.url,
+                    bytes: candidate.bytes,
+                    category: .developerCaches,
+                    detail: "Creative app scratch & media cache",
+                    isSafeByDefault: true
+                )
+            )
+        }
+
         if Task.isCancelled { return QuickCleanScanResult(items: items) }
 
         await progress?("Checking orphaned app leftovers…")
