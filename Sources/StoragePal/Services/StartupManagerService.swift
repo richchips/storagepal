@@ -8,6 +8,7 @@ final class StartupManagerService: ObservableObject {
 
     @Published private(set) var startupItems: [StartupItem] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var scanWarnings: [String] = []
 
     private let fm = FileManager.default
     private let home = FileManager.default.homeDirectoryForCurrentUser
@@ -18,17 +19,18 @@ final class StartupManagerService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        var items: [StartupItem] = []
-
-        // 1. Scan User LaunchAgents (~/Library/LaunchAgents)
         let userAgentsURL = home.appendingPathComponent("Library/LaunchAgents")
-        items.append(contentsOf: scanLaunchDirectory(at: userAgentsURL, kind: .userLaunchAgent))
-
-        // 2. Scan System LaunchAgents (/Library/LaunchAgents)
-        let systemAgentsURL = URL(fileURLWithPath: "/Library/LaunchAgents")
-        items.append(contentsOf: scanLaunchDirectory(at: systemAgentsURL, kind: .systemLaunchAgent))
-
-        self.startupItems = items
+        let worker = Task.detached(priority: .utility) {
+            var warnings: [String] = []
+            var items = Self.scanLaunchDirectory(at: userAgentsURL, kind: .userLaunchAgent, warnings: &warnings)
+            items += Self.scanLaunchDirectory(at: URL(fileURLWithPath: "/Library/LaunchAgents"), kind: .systemLaunchAgent, warnings: &warnings)
+            return (items, warnings)
+        }
+        let (items, warnings) = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+        if !Task.isCancelled {
+            self.startupItems = items
+            self.scanWarnings = warnings
+        }
         return items
     }
 
@@ -78,23 +80,29 @@ final class StartupManagerService: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func scanLaunchDirectory(at directoryURL: URL, kind: StartupItemKind) -> [StartupItem] {
-        guard fm.fileExists(atPath: directoryURL.path),
-              let files = try? fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+    nonisolated private static func scanLaunchDirectory(at directoryURL: URL, kind: StartupItemKind, warnings: inout [String]) -> [StartupItem] {
+        let fm = FileManager.default
+        let files: [URL]
+        do {
+            files = try fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        } catch {
+            if !PulseService.isMissingFile(error) { warnings.append(directoryURL.path) }
             return []
         }
 
         var results: [StartupItem] = []
 
         for fileURL in files where fileURL.pathExtension.lowercased() == "plist" {
+            if Task.isCancelled { break }
             guard let data = try? Data(contentsOf: fileURL),
                   let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+                warnings.append(fileURL.path)
                 continue
             }
 
             let label = plist["Label"] as? String ?? fileURL.deletingPathExtension().lastPathComponent
             let disabled = plist["Disabled"] as? Bool ?? false
-            let runAtLoad = plist["RunAtLoad"] as? Bool ?? true
+            let runAtLoad = plist["RunAtLoad"] as? Bool ?? false
 
             var targetPath: String? = plist["Program"] as? String
             if targetPath == nil, let args = plist["ProgramArguments"] as? [String], let first = args.first {
@@ -102,11 +110,10 @@ final class StartupManagerService: ObservableObject {
             }
 
             var isMissing = false
-            if let targetPath, !targetPath.isEmpty {
-                // If path points to an executable, check if it exists
-                if !fm.fileExists(atPath: targetPath) {
-                    isMissing = true
-                }
+            if let targetPath, targetPath.hasPrefix("/") {
+                // Relative commands are resolved by launchd; unreadable is not missing.
+                do { _ = try fm.attributesOfItem(atPath: targetPath) }
+                catch { isMissing = PulseService.isMissingFile(error) }
             }
 
             let itemKind: StartupItemKind = isMissing ? .orphanedAgent : kind
@@ -134,7 +141,7 @@ final class StartupManagerService: ObservableObject {
         }
     }
 
-    private func formatAgentName(label: String) -> String {
+    nonisolated private static func formatAgentName(label: String) -> String {
         let parts = label.split(separator: ".")
         if let last = parts.last, last.count > 2 {
             return String(last).capitalized

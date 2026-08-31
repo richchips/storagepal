@@ -8,6 +8,9 @@ Official GitHub Repository: [https://github.com/richchips/storagepal](https://gi
 
 ## Key Features
 
+- **Pulse**: A device-neutral maintenance check-in for storage headroom, disposable browser caches, startup helpers, app activity, FileVault and firewall status, with an update checklist. Each result shows measured evidence and whether it was verified, needs review, or needs a manual check. Open **Pulse → Run Pulse** or press **⌘⇧P**.
+- **Activity Review**: Read-only app CPU and resident-memory snapshots, with a confirmed normal quit request. No automatic suspension, force quitting, or claims that busy apps are unnecessary.
+- **Update Hub**: Routes to Software Update, App Store updates, installed apps, and Storage Pal’s own updater. Third-party app and peripheral-driver versions are not automatically verified.
 - **Review-First Storage Dashboard**: Real-time capacity gauges, proactive advice, and proportional interactive Treemap visualizer.
 - **Pal Vault**: Hardware-backed AES-GCM-256 encrypted local vault with Touch ID biometrics and auto-lock on sleep/inactivity.
 - **Document Redaction Studio**: Domain-specific templates (Financial/Tax, Legal, Medical, HR, Custom) with true vector/raster PDF flattening (zero selectable text leakage).
@@ -35,10 +38,14 @@ Unzip the archive and drag **Storage Pal.app** to your `/Applications` folder.
 ## Building from Source
 
 Requirements: macOS 14.0 (Sonoma) or newer with Swift 5.9+ / Xcode command line tools.
+Running the XCTest suite requires a full Xcode installation; Command Line Tools alone may not include XCTest.
 
 ```sh
 # Verify standard build
 swift build
+
+# Verify behavior and safety boundaries
+swift test
 
 # Package, codesign, and archive distribution build
 ./scripts/package-app.sh

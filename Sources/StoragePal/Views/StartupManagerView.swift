@@ -5,6 +5,8 @@ struct StartupManagerView: View {
     @ObservedObject private var startupService = StartupManagerService.shared
     @State private var searchText = ""
     @State private var selectedKind: StartupItemKind?
+    @State private var pendingTrash: StartupItem?
+    @State private var pendingToggle: StartupItem?
 
     var body: some View {
         ScrollView {
@@ -26,6 +28,19 @@ struct StartupManagerView: View {
 
                 summaryRow
 
+                PalCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("These are LaunchAgent configurations, not a list of unnecessary apps. Configuration changes may take effect at next login; running helpers are not stopped.")
+                            .font(.callout).foregroundStyle(Color.palMuted)
+                        if !startupService.scanWarnings.isEmpty {
+                            Text("Some startup locations could not be read. These results are incomplete.")
+                                .font(.callout).foregroundStyle(Color.palMuted)
+                        }
+                        Button("Open Login Items & Extensions") { model.openLoginItemsSettings() }
+                            .buttonStyle(PalButtonStyle())
+                    }
+                }
+
                 searchAndFilterBar
 
                 if startupService.isLoading {
@@ -46,7 +61,7 @@ struct StartupManagerView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("No Background LaunchAgents Found")
                                     .font(.system(size: 15, weight: .bold))
-                                Text("Your Mac is clean. No third-party LaunchAgents or startup helpers were discovered in ~/Library/LaunchAgents.")
+                                Text("No LaunchAgents were found in the accessible user and shared Library folders. Check Login Items in Settings for other startup apps.")
                                     .font(.system(size: 13))
                                     .foregroundStyle(Color.palMuted)
                             }
@@ -69,6 +84,27 @@ struct StartupManagerView: View {
                 Task { await startupService.scanStartupItems() }
             }
         }
+        .alert("Move startup helper to Trash?", isPresented: Binding(get: { pendingTrash != nil }, set: { if !$0 { pendingTrash = nil } }), presenting: pendingTrash) { item in
+            Button("Cancel", role: .cancel) { pendingTrash = nil }
+            Button("Move to Trash", role: .destructive) {
+                let result = startupService.trashItem(item)
+                if !result.isSuccess { model.errorMessage = "The startup helper could not be moved to Trash. Check permissions and try again." }
+                pendingTrash = nil
+            }
+        } message: { item in
+            Text("This removes the launch configuration for \(item.name). It may affect the app’s background features at next login. The file stays recoverable in Trash; any running helper is not stopped.")
+        }
+        .alert("Change startup configuration?", isPresented: Binding(get: { pendingToggle != nil }, set: { if !$0 { pendingToggle = nil } }), presenting: pendingToggle) { item in
+            Button("Cancel", role: .cancel) { pendingToggle = nil }
+            Button(item.isEnabled ? "Disable configuration" : "Enable configuration") {
+                if !startupService.toggleItem(item, enable: !item.isEnabled) {
+                    model.errorMessage = "The startup configuration could not be changed. Use Login Items in System Settings or the app’s preferences."
+                }
+                pendingToggle = nil
+            }
+        } message: { item in
+            Text("This changes the launch configuration for \(item.name). It does not stop a running helper, and system overrides may take precedence. Use Login Items in Settings to manage current login behavior.")
+        }
     }
 
     private var summaryRow: some View {
@@ -90,7 +126,7 @@ struct StartupManagerView: View {
 
             PalCard(padding: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("ACTIVE AT BOOT")
+                    Text("CONFIGURED ENABLED")
                         .font(.system(size: 9, weight: .bold))
                         .tracking(1)
                         .foregroundStyle(Color.palInk)
@@ -202,7 +238,7 @@ struct StartupManagerView: View {
                         if !item.isExecutableMissing {
                             Toggle("", isOn: Binding(
                                 get: { item.isEnabled },
-                                set: { _ = startupService.toggleItem(item, enable: $0) }
+                                set: { _ in pendingToggle = item }
                             ))
                             .labelsHidden()
                             .toggleStyle(.switch)
@@ -216,7 +252,7 @@ struct StartupManagerView: View {
                         }
 
                         Button("Trash") {
-                            _ = startupService.trashItem(item)
+                            pendingTrash = item
                         }
                         .buttonStyle(.borderless)
                         .foregroundStyle(.red)

@@ -4,6 +4,22 @@ All notable changes to **Storage Pal** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [0.23.0] - 2026-08-31
+
+### Added
+- **Pulse**: Local device check-in with seven scoped checks, cancellable progress, review filters, measurement timestamps, and explicit unavailable/manual states instead of an invented health score.
+- **Activity**: App-process CPU and resident-memory snapshots with review thresholds, Activity Monitor access, and confirmed normal quit requests that verify process identity before acting.
+- **Updates**: System, App Store, developer app, peripheral and Storage Pal update routes; unknown versions are never labelled outdated.
+- Read-only browser cache discovery with scan bounds, cancellation, coverage reporting, and exclusions for symlinks, cloud files, app support data and Trash. Selected files use the existing confirmed Trash review flow.
+- Pulse entry points in the sidebar, Today header and app menu (⌘⇧P), plus links to cleanup, uninstalling, duplicates and cloud tools. Sidebar navigation now scrolls at smaller window sizes.
+
+### Fixed
+- Startup helper deletion and configuration toggles now require confirmation and surface failures.
+- Startup scans run away from the UI thread, report unreadable locations and avoid labelling unresolved relative commands as missing executables. Configuration state is no longer described as proof a helper is running at boot.
+
+### Validation
+- Regression tests cover unavailable checks, storage thresholds, security status parsing, activity parsing, cache scan boundaries and cancellation.
+
 ## [0.22.0] - 2026-08-26
 
 ### Added & Enhanced

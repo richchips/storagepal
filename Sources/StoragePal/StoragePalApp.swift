@@ -21,6 +21,11 @@ struct StoragePalApp: App {
                 }
             }
             CommandGroup(after: .toolbar) {
+                Button("Run Pulse") {
+                    model.dashboardSection = .pulse
+                    model.runPulse()
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
                 Button("Check Storage Now") { model.runScan() }
                     .keyboardShortcut("r", modifiers: [.command])
             }

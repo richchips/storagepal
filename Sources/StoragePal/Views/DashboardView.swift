@@ -1,11 +1,14 @@
 import SwiftUI
 
-private enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable {
     case today = "Today"
+    case pulse = "Pulse"
     case tidy = "Tidy list"
     case duplicates = "Duplicates"
     case apps = "Apps"
     case startup = "Startup"
+    case activity = "Activity"
+    case updates = "Updates"
     case photos = "Photos"
     case vault = "Vault"
     case sanitize = "Sanitize"
@@ -20,10 +23,13 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .today: "sun.max"
+        case .pulse: "waveform.path.ecg"
         case .tidy: "checklist"
         case .duplicates: "doc.on.doc"
         case .apps: "app.badge.checkmark"
         case .startup: "gearshape.2"
+        case .activity: "waveform.path"
+        case .updates: "arrow.triangle.2.circlepath"
         case .photos: "photo.stack"
         case .vault: "lock.shield.fill"
         case .sanitize: "location.slash.fill"
@@ -41,7 +47,7 @@ struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var clipboardGuard = ClipboardGuardService.shared
     @ObservedObject private var updateService = AppUpdateService.shared
-    @State private var section: DashboardSection = .today
+    private var section: DashboardSection { model.dashboardSection }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -144,10 +150,13 @@ struct DashboardView: View {
                     Group {
                         switch section {
                         case .today: TodayView()
+                        case .pulse: PulseView()
                         case .tidy: TidyListView()
                         case .duplicates: DuplicateFinderView()
                         case .apps: AppUninstallerView()
                         case .startup: StartupManagerView()
+                        case .activity: PulseActivityView()
+                        case .updates: PulseUpdatesView()
                         case .photos: PhotoDeduplicatorView()
                         case .vault: PalVaultView()
                         case .sanitize: ConfidentialSanitizerView()
@@ -215,38 +224,38 @@ struct DashboardView: View {
             .padding(.top, 22)
             .padding(.bottom, 28)
 
-            VStack(spacing: 6) {
-                ForEach(DashboardSection.allCases) { item in
-                    Button {
-                        section = item
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: item.symbol)
-                                .frame(width: 20)
-                            Text(item.rawValue)
-                            Spacer()
-                            if item == .tidy,
-                               let count = model.report?.recommendations.filter({ $0.kind != .iCloud }).count,
-                               count > 0 {
-                                Text("\(count)")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(Color.palMint.opacity(0.16), in: Capsule())
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(DashboardSection.allCases) { item in
+                        Button {
+                            model.dashboardSection = item
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: item.symbol)
+                                    .frame(width: 20)
+                                Text(item.rawValue)
+                                Spacer()
+                                if item == .tidy,
+                                   let count = model.report?.recommendations.filter({ $0.kind != .iCloud }).count,
+                                   count > 0 {
+                                    Text("\(count)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(Color.palMint.opacity(0.16), in: Capsule())
+                                }
                             }
+                            .font(.system(size: 13, weight: section == item ? .semibold : .medium))
+                            .foregroundStyle(section == item ? Color.palInk : Color.palMuted)
+                            .padding(.horizontal, 14)
+                            .frame(height: 42)
+                            .background(section == item ? Color.palSidebarSelection : .clear, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        .font(.system(size: 13, weight: section == item ? .semibold : .medium))
-                        .foregroundStyle(section == item ? Color.palInk : Color.palMuted)
-                        .padding(.horizontal, 14)
-                        .frame(height: 42)
-                        .background(section == item ? Color.palSidebarSelection : .clear, in: RoundedRectangle(cornerRadius: 12))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 12)
             }
-            .padding(.horizontal, 12)
-
-            Spacer()
 
             VStack(alignment: .leading, spacing: 9) {
                 Label(model.isScanning ? model.scanMessage : lastCheckedText, systemImage: model.isScanning ? "arrow.triangle.2.circlepath" : "clock")
@@ -284,6 +293,12 @@ private struct TodayView: View {
                     )
                     Spacer()
                     HStack(spacing: 10) {
+                        Button {
+                            model.dashboardSection = .pulse
+                        } label: {
+                            Label("Pulse", systemImage: "waveform.path.ecg")
+                        }
+                        .buttonStyle(PalButtonStyle())
                         Button {
                             Task {
                                 await model.runQuickScan()

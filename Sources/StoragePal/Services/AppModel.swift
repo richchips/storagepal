@@ -29,6 +29,18 @@ final class AppModel: ObservableObject {
     @Published var quickCleanScanMessage = "Ready to quick scan"
     @Published var lastQuickCleanSummary: QuickCleanSummary?
     @Published var isInlineQuickCleaning = false
+    @Published var dashboardSection: DashboardSection = .today
+    @Published private(set) var pulseReport: PulseReport?
+    @Published private(set) var isPulseScanning = false
+    @Published private(set) var pulseProgress = 0.0
+    @Published private(set) var pulseMessage = "Ready when you are"
+    @Published private(set) var pulseCacheCandidates: [FileCandidate] = []
+    @Published private(set) var pulseActivity: [PulseAppActivity] = []
+    @Published private(set) var activityCheckedAt: Date?
+    @Published private(set) var isActivityScanning = false
+    @Published private(set) var activityError: String?
+    private let pulseService = PulseService()
+    private var pulseTask: Task<Void, Never>?
 
     private let scanner = StorageScanner()
     private let uninstaller = AppUninstallerService()
@@ -91,6 +103,7 @@ final class AppModel: ObservableObject {
     }
 
     deinit {
+        pulseTask?.cancel()
         scanTask?.cancel()
         schedulerTask?.cancel()
     }
@@ -171,7 +184,20 @@ final class AppModel: ObservableObject {
         }
 
         if !removedCandidates.isEmpty {
-            remove(removedCandidates)
+            if selectedRecommendation?.id == "pulse-caches" {
+                let removedIDs = Set(removedCandidates.map(\.id))
+                pulseCacheCandidates.removeAll { removedIDs.contains($0.id) }
+                // Trashing does not necessarily free disk space. Keep the measured
+                // capacity snapshot unchanged until a new scan reads the volume.
+                if let recommendation = selectedRecommendation {
+                    let remaining = recommendation.candidates.filter { !removedIDs.contains($0.id) }
+                    selectedRecommendation = StorageRecommendation(id: recommendation.id, kind: recommendation.kind,
+                        title: recommendation.title, detail: recommendation.detail,
+                        reclaimableBytes: remaining.reduce(0) { $0 + $1.bytes }, candidates: remaining, actionLabel: recommendation.actionLabel)
+                }
+            } else {
+                remove(removedCandidates)
+            }
         }
 
         if summary.hasFailures {
@@ -273,6 +299,148 @@ final class AppModel: ObservableObject {
 
     func openICloudSettings() {
         openSettingsURL("x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?iCloud")
+    }
+
+    // MARK: - Pulse (read-only device check-in)
+
+    func runPulse() {
+        guard !isPulseScanning, !isActivityScanning else { return }
+        isPulseScanning = true
+        pulseProgress = 0
+        pulseMessage = "Measuring storage headroom…"
+        pulseTask = Task { [weak self] in
+            guard let self else { return }
+            defer { isPulseScanning = false; pulseTask = nil }
+            do {
+                var checks = [await pulseService.storageCheck()]
+                try Task.checkCancellation()
+                pulseProgress = 1.0 / 7
+                pulseMessage = "Measuring disposable browser caches…"
+                let caches = try await pulseService.scanCaches()
+                let cacheDetail = "\(caches.candidates.count) local cache files measured. Cookies, history and saved logins are excluded. Quit browsers before cleanup."
+                checks.append(PulseCheck(area: .cleanup,
+                                         state: !caches.limitations.isEmpty ? .unavailable : caches.bytes > 0 ? .review : .clear,
+                                         detail: cacheDetail + (caches.limitations.isEmpty ? "" : " Partial scan: \(caches.limitations.count) locations or limits prevented a complete measurement."),
+                                         metric: caches.bytes > 0 ? "\(ByteText.string(caches.bytes)) to review" : "No cache files found"))
+                pulseProgress = 2.0 / 7
+                pulseMessage = "Inspecting startup helpers…"
+                let startup = StartupManagerService.shared
+                let items = await startup.scanStartupItems()
+                try Task.checkCancellation()
+                let missing = items.filter { $0.isExecutableMissing }.count
+                checks.append(PulseCheck(area: .startup,
+                                         state: !startup.scanWarnings.isEmpty ? .unavailable : missing > 0 ? .review : .clear,
+                                         detail: "\(items.count) LaunchAgents found; \(missing) have missing executable paths. Enabled helpers are not automatically unnecessary. Modern login items and daemons need a separate check in Settings." + (startup.scanWarnings.isEmpty ? "" : " Some locations could not be read."),
+                                         metric: missing > 0 ? "\(missing) to review" : "\(items.count) helpers"))
+                pulseProgress = 3.0 / 7
+                pulseMessage = "Taking an app activity snapshot…"
+                await refreshPulseActivity()
+                try Task.checkCancellation()
+                let busy = pulseActivity.filter(\.warrantsReview).count
+                checks.append(PulseCheck(area: .activity, state: activityError != nil ? .unavailable : busy > 0 ? .review : .clear,
+                                         detail: activityError ?? "\(pulseActivity.count) app processes sampled. Review above 20% CPU or 1 GB resident memory. High usage can be normal; helper processes are not included.",
+                                         metric: activityError != nil ? "Not measured" : "\(busy) to review"))
+                pulseProgress = 4.0 / 7
+                pulseMessage = "Checking privacy settings…"
+                checks += try await pulseService.securityChecks()
+                pulseProgress = 6.0 / 7
+                pulseMessage = "Preparing your update checklist…"
+                checks.append(PulseCheck(area: .updates, state: .manual,
+                                         detail: "Check system updates, App Store apps and vendor updaters. Pulse cannot verify every installed app or peripheral driver.", metric: "Manual review"))
+                try Task.checkCancellation()
+                pulseCacheCandidates = caches.candidates
+                pulseReport = PulseReport(createdAt: Date(), checks: checks)
+                pulseProgress = 1
+                pulseMessage = "Check-in complete. Nothing was changed."
+            } catch is CancellationError {
+                pulseMessage = "Check-in cancelled. Nothing was changed."
+            } catch {
+                pulseMessage = "Check-in could not finish. Try again."
+            }
+        }
+    }
+
+    func cancelPulse() {
+        pulseMessage = "Cancelling check-in…"
+        pulseTask?.cancel()
+    }
+
+    func refreshPulseActivity() async {
+        guard !isActivityScanning else { return }
+        isActivityScanning = true
+        defer { isActivityScanning = false }
+        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> PulseAppIdentity? in
+            guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                  !app.isTerminated, app.activationPolicy != .prohibited,
+                  let url = app.bundleURL, !url.path.hasPrefix("/System/"),
+                  app.bundleIdentifier != "com.apple.finder" else { return nil }
+            return PulseAppIdentity(pid: app.processIdentifier, name: app.localizedName ?? url.deletingPathExtension().lastPathComponent,
+                                    bundleURL: url, launchDate: app.launchDate, isBackground: app.activationPolicy == .accessory)
+        }
+        do {
+            let result = try await pulseService.activity(for: apps)
+            try Task.checkCancellation()
+            pulseActivity = result
+            activityCheckedAt = Date()
+            activityError = nil
+        } catch is CancellationError { }
+        catch {
+            pulseActivity = []
+            activityCheckedAt = nil
+            activityError = "App activity could not be read. Open Activity Monitor for a full view."
+        }
+    }
+
+    /// Called only after the view's explicit confirmation. Never force-quits.
+    func requestQuit(_ activity: PulseAppActivity) {
+        guard let app = NSRunningApplication(processIdentifier: activity.app.pid),
+              !app.isTerminated, app.bundleURL == activity.app.bundleURL,
+              let launchDate = activity.app.launchDate, app.launchDate == launchDate,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              app.activationPolicy != .prohibited,
+              app.bundleIdentifier != "com.apple.finder",
+              !activity.app.bundleURL.path.hasPrefix("/System/") else {
+            errorMessage = "This app has changed or already closed. Refresh activity before trying again."
+            return
+        }
+        if !app.terminate() { errorMessage = "The app could not be asked to quit. Save your work and quit it directly." }
+    }
+
+    func reviewPulse(_ area: PulseArea) {
+        switch area {
+        case .storage: dashboardSection = .tidy; if report == nil { runScan() }
+        case .cleanup:
+            guard !pulseCacheCandidates.isEmpty else { return }
+            selectedRecommendation = StorageRecommendation(id: "pulse-caches", kind: .browserCaches,
+                title: "Review browser cache files", detail: "Quit browsers first. Select only files you want to move to Trash. Nothing is permanently erased; space may remain occupied until you empty Trash.",
+                reclaimableBytes: pulseCacheCandidates.reduce(0) { $0 + $1.bytes }, candidates: pulseCacheCandidates, actionLabel: "Review")
+        case .startup: dashboardSection = .startup
+        case .activity: dashboardSection = .activity
+        case .encryption: openSettingsURL("x-apple.systempreferences:com.apple.preference.security?FileVault")
+        case .firewall: openSettingsURL("x-apple.systempreferences:com.apple.preference.security?Firewall")
+        case .updates: dashboardSection = .updates
+        }
+    }
+
+    func openSoftwareUpdateSettings() {
+        openSettingsURL("x-apple.systempreferences:com.apple.Software-Update-Settings.extension")
+    }
+
+    func openLoginItemsSettings() {
+        openSettingsURL("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+    }
+
+    func openAppStoreUpdates() {
+        guard let url = URL(string: "macappstore://showUpdatesPage") else { return }
+        if !NSWorkspace.shared.open(url) { errorMessage = "Open the App Store and choose Updates." }
+    }
+
+    func openActivityMonitor() {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") else {
+            errorMessage = "Open Activity Monitor from Applications → Utilities."
+            return
+        }
+        NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
 
     private var shouldScanNow: Bool {
@@ -1262,5 +1430,3 @@ final class AppModel: ObservableObject {
         return summary
     }
 }
-
-
